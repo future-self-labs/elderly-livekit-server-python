@@ -1,6 +1,7 @@
 # Python artifacts
 venv/
 __pycache__/
+.venv/
 
 # Local environment & config files
 .env

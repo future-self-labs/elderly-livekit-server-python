@@ -2,6 +2,7 @@
 # syntax=docker/dockerfile:1
 ARG PYTHON_VERSION=3.11.6
 FROM python:${PYTHON_VERSION}-slim
+COPY --from=ghcr.io/astral-sh/uv:0.6.12 /uv /uvx /bin/
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -32,16 +33,16 @@ RUN chown -R appuser /home/appuser/.cache
 
 WORKDIR /home/appuser
 
-COPY requirements.txt .
-RUN python -m pip install --user --no-cache-dir -r requirements.txt
+COPY pyproject.toml uv.lock .
+RUN uv sync --locked --no-dev --no-install-project
 
 COPY . .
 
 # ensure that any dependent models are downloaded at build-time
-RUN python main.py download-files
+RUN uv run main.py download-files
 
 # expose healthcheck port
 EXPOSE 8081
 
 # Run the application.
-CMD ["python", "main.py", "start"]
+CMD ["uv", "run", "main.py", "start"]
