@@ -141,7 +141,6 @@ class Companion(Agent):
         await self.session.say(random.choice(thinking_messages))
 
         try:
-            print("getting response from perplexity")
             response = httpx.post(
                 "https://api.perplexity.ai/chat/completions",
                 json={
@@ -154,19 +153,15 @@ class Companion(Agent):
                 },
                 timeout=10.0,
             )
-            print(response.status_code)
-            print(response.text)
 
             if response.status_code != 200:
                 print(f"Web search failed: {response.status_code} {response.text}")
                 return f"Web search failed: {response.status_code}"
 
             data = response.json()
-            print(data)
             participant_identity = next(
                 iter(get_job_context().room.remote_participants)
             )
-            print(participant_identity)
             result = await get_job_context().room.local_participant.perform_rpc(
                 destination_identity=participant_identity,
                 method="web_search",
