@@ -1,0 +1,91 @@
+{
+  "name": "Elderly Companion workflow API",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "={{ $json.ELDERLY_COMPANION_API }}/api/v1/memory/{{ $json.userId }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0],
+      "name": "Get Zep Profile Facts"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.ELDERLY_COMPANION_API }}/api/v1/livekit/call",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "phoneNumber",
+              "value": "{{ $json.phoneNumber }}"
+            },
+            {
+              "name": "message",
+              "value": "{{ $json.message }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 20],
+      "id": "b520ee4b-e97f-4654-98c4-d0fc678e4072",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "CJCUpwMC8OzmbBmz",
+          "name": "Bearer auth Livekit"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "{{ $json.cron }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "name": "Schedule Trigger"
+    }
+  ],
+  "connections": {
+    "Get Zep Profile Facts": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Zep Profile Facts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
