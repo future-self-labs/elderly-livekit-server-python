@@ -65,6 +65,7 @@ async def create_scheduled_workflow(
     phone_number: str,
     user_id: str,
     message: str,
+    title: str,
 ) -> Dict[str, Any]:
     """Create and activate a scheduled workflow in n8n.
     
@@ -88,6 +89,7 @@ async def create_scheduled_workflow(
             .replace("{{ $json.cron }}", cron)
             .replace("{{ $json.ELDERLY_COMPANION_API }}", os.getenv("ELDERLY_COMPANION_API"))
             .replace("{{ $json.message }}", message)
+            .replace("{{ $json.workflowName }}", title)
         )
         
         # Create the workflow in n8n

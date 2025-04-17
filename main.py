@@ -124,6 +124,7 @@ class Companion(Agent):
         """
         try:
             participant_identity = next(iter(get_job_context().room.remote_participants))
+
             response = await context.session.room.local_participant.perform_rpc(
                 destination_identity=participant_identity,
                 method="get_phone_number",
@@ -202,15 +203,17 @@ class Companion(Agent):
         phone_number: str,
         cron_expression: str,
         message: str,
+        title: str,
     ):
         """Schedule a task to be executed at a specific time.
 
         This tool creates and activates a workflow in n8n that will trigger a task to be executed at the specified time.
 
         Args:
-            phone_number: The phone number to call. Can be retrieved using the get_phone_number tool.
+            phone_number: The phone number to call. If not known, can be retrieved using the get_phone_number tool.
             cron_expression: The cron expression specifying when to trigger the task.
-            message: The topic or message that the user wants to discuss.
+                message: The topic or message that the user wants to discuss.
+            title: The title of the task.
         Returns:
             A string indicating whether the task was successfully scheduled.
         """
@@ -227,6 +230,7 @@ class Companion(Agent):
                 phone_number=phone_number,
                 user_id=participant_identity,
                 message=message,
+                title=title,
             )
 
             return "I've scheduled the call for you. You'll receive a call at the specified time."
@@ -318,7 +322,7 @@ async def entrypoint(ctx: JobContext):
     participant = await ctx.wait_for_participant()
 
     attributes = participant.attributes
-    print(attributes)
+    print("attribute", attributes)
 
     # Get user context
     sessions = zep.user.get_sessions(user_id=participant.identity)
@@ -363,6 +367,20 @@ async def entrypoint(ctx: JobContext):
             """,
         )
 
+    phone_number = attributes["sip.phoneNumber"]
+    
+    print("phone_number", phone_number)
+
+    if phone_number is not None:
+        initial_context.add_message(
+            role="user",
+            content=f"""
+                Here's the phone number of the user:
+                {phone_number}
+            """,
+        )
+
+    
     session = AgentSession(
         stt=openai.STT(model="whisper-1"),
         llm=openai.LLM(model="gpt-4o"),
