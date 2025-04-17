@@ -151,7 +151,7 @@ class Companion(Agent):
                     "Authorization": f"Bearer {os.getenv('PERPLEXITY_API_KEY')}",
                     "Content-Type": "application/json",
                 },
-                timeout=10.0,
+                timeout=25.0,
             )
 
             if response.status_code != 200:
@@ -166,7 +166,7 @@ class Companion(Agent):
                 destination_identity=participant_identity,
                 method="web_search",
                 payload=json.dumps(data),
-                response_timeout=10,
+                response_timeout=25,
             )
             return result
 
