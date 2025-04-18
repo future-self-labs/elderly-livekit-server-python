@@ -214,6 +214,7 @@ class Companion(Agent):
             cron_expression: The cron expression specifying when to trigger the task.
                 message: The topic or message that the user wants to discuss.
             title: The title of the task.
+            message: The message to send to the user.
         Returns:
             A string indicating whether the task was successfully scheduled.
         """
@@ -366,7 +367,7 @@ async def entrypoint(ctx: JobContext):
             """,
         )
 
-    phone_number = attributes["sip.phoneNumber"]
+    phone_number = attributes.get("sip.phoneNumber")
     
     print("phone_number", phone_number)
 
