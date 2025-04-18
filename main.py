@@ -322,7 +322,6 @@ async def entrypoint(ctx: JobContext):
     participant = await ctx.wait_for_participant()
 
     attributes = participant.attributes
-    print("attribute", attributes)
 
     # Get user context
     sessions = zep.user.get_sessions(user_id=participant.identity)
