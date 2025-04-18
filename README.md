@@ -18,6 +18,12 @@ This will install the dependencies and create a lockfile if one doesn't exist.
 uv sync
 ```
 
+### Download the required models
+
+```bash
+uv run main.py download-files
+```
+
 ### uv run
 
 This will run the script in dev mode for local development.

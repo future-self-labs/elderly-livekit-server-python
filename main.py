@@ -15,6 +15,7 @@ from livekit.agents import (
     RoomInputOptions,
     RunContext,
     function_tool,
+    ToolError,
     get_job_context,
 )
 from livekit.plugins import (
@@ -25,6 +26,7 @@ from livekit.plugins import (
 )
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from zep_cloud.client import Zep
+from lib.n8n import create_scheduled_workflow, delete_scheduled_workflow, get_user_workflows
 
 load_dotenv()
 
@@ -52,7 +54,7 @@ class Companion(Agent):
 
                 When the user asks you about reminders:
                 - You are able to schedule new reminders
-                - You are not able to edit or delete reminders. If the user asks you to, please refer them to the Notifcations tab in the app where they can see all their reminders.
+                - You are able to delete existing reminders, but not edit existing ones. 
 
                 Never:
                 - Mention the technical details of the memory system to users
@@ -98,9 +100,9 @@ class Companion(Agent):
                 # Ingest messages into memory with assistant roles ignored
                 zep.memory.add(
                     self.session_id,
-                    # Setting ignore_roles to include “assistant” will make it so that only the user messages are ingested into the graph, but the assistant messages are still used to contextualize the user messages.
-                    # This is important in case the user message itself does not have enough context, such as the message “Yes.”
-                    # Additionally, the assistant messages will still be added to the session’s message history.
+                    # Setting ignore_roles to include "assistant" will make it so that only the user messages are ingested into the graph, but the assistant messages are still used to contextualize the user messages.
+                    # This is important in case the user message itself does not have enough context, such as the message "Yes."
+                    # Additionally, the assistant messages will still be added to the session's message history.
                     ignore_roles=["assistant"],
                     messages=messages_to_ingest,
                     return_context=True,
@@ -110,6 +112,26 @@ class Companion(Agent):
                 print(messages_to_ingest)
 
             return new_message
+            
+    @function_tool()
+    async def get_phone_number(
+        context: RunContext,
+    ):
+        """Retrieve the user's phone number.
+        
+        Returns:
+            A string containing the user's phone number
+        """
+        try:
+            participant_identity = next(iter(get_job_context().room.remote_participants))
+
+            response = await context.session.room.local_participant.perform_rpc(
+                destination_identity=participant_identity,
+                method="get_phone_number",
+            )
+            return response
+        except Exception:
+            raise ToolError("Unable to retrieve user phone number")
 
     @function_tool
     async def web_search(
@@ -174,11 +196,132 @@ class Companion(Agent):
             print(f"Error searching the web: {error}")
             return "Error searching the web"
 
+    @function_tool
+    async def schedule_task(
+        self,
+        context: RunContext,
+        phone_number: str,
+        cron_expression: str,
+        message: str,
+        title: str,
+    ):
+        """Schedule a task to be executed at a specific time.
+
+        This tool creates and activates a workflow in n8n that will trigger a task to be executed at the specified time.
+
+        Args:
+            phone_number: The phone number to call. If not known, can be retrieved using the get_phone_number tool.
+            cron_expression: The cron expression specifying when to trigger the task.
+                message: The topic or message that the user wants to discuss.
+            title: The title of the task.
+        Returns:
+            A string indicating whether the task was successfully scheduled.
+        """
+
+        try:
+            # Get the user ID from the context
+            participant_identity = next(
+                iter(get_job_context().room.remote_participants)
+            )
+
+            # Create and activate the workflow in n8n
+            await create_scheduled_workflow(
+                cron=cron_expression,
+                phone_number=phone_number,
+                user_id=participant_identity,
+                message=message,
+                title=title,
+            )
+
+            return "I've scheduled the call for you. You'll receive a call at the specified time."
+
+        except Exception as error:
+            print(f"Error scheduling workflow: {error}")
+            return "I encountered an error while trying to schedule the call. Please try again later."
+
+    @function_tool
+    async def get_scheduled_tasks(
+        self,
+        context: RunContext,
+    ):
+        """Get all scheduled tasks for the current user.
+
+        This tool retrieves all workflows associated with the current user from n8n.
+
+        Returns:
+            A list of scheduled tasks with their details.
+        """
+        try:
+            # Get the user ID from the context
+            participant_identity = next(
+                iter(get_job_context().room.remote_participants)
+            )
+
+            # Get user's workflows
+            workflows = await get_user_workflows(participant_identity)
+            
+            # Format the response
+            tasks = []
+            for workflow in workflows:
+                # Extract relevant information from the workflow
+                task = {
+                    "id": workflow["id"],
+                    "name": workflow["name"],
+                    "active": workflow["active"],
+                    "created_at": workflow["createdAt"],
+                }
+                tasks.append(task)
+            
+            return tasks
+
+        except Exception as error:
+            print(f"Error getting scheduled tasks: {error}")
+            return "I encountered an error while trying to get your scheduled tasks. Please try again later."
+
+    @function_tool
+    async def delete_scheduled_task(
+        self,
+        context: RunContext,
+        workflow_id: str,
+    ):
+        """Delete a scheduled task.
+
+        This tool deletes a scheduled workflow from n8n using its workflow ID.
+        It first verifies that the workflow belongs to the current user.
+
+        Args:
+            workflow_id: The ID of the workflow to delete.
+
+        Returns:
+            A string indicating whether the task was successfully deleted.
+        """
+        try:
+            # Get the user ID from the context
+            participant_identity = next(
+                iter(get_job_context().room.remote_participants)
+            )
+
+            # Get user's workflows to verify ownership
+            workflows = await get_user_workflows(participant_identity)
+            workflow_ids = [w["id"] for w in workflows]
+            
+            if workflow_id not in workflow_ids:
+                return "I couldn't find that scheduled task. Please make sure you're trying to delete one of your own tasks."
+            
+            await delete_scheduled_workflow(workflow_id)
+            return "I've successfully deleted the scheduled task."
+
+        except Exception as error:
+            print(f"Error deleting scheduled task: {error}")
+            return "I encountered an error while trying to delete the scheduled task. Please try again later."
+
 
 async def entrypoint(ctx: JobContext):
     # Connect to LiveKit
     await ctx.connect()
     participant = await ctx.wait_for_participant()
+
+    attributes = participant.attributes
 
     # Get user context
     sessions = zep.user.get_sessions(user_id=participant.identity)
@@ -211,6 +354,32 @@ async def entrypoint(ctx: JobContext):
             """,
         )
 
+    if attributes.get("initialRequest"):
+        initial_context.add_message(
+            role="user",
+            content=f"""
+                Here's what I want to discuss with you:
+
+                <user_request>
+                {attributes["initialRequest"]}
+                </user_request>
+            """,
+        )
+
+    phone_number = attributes["sip.phoneNumber"]
+    
+    print("phone_number", phone_number)
+
+    if phone_number is not None:
+        initial_context.add_message(
+            role="user",
+            content=f"""
+                Here's the phone number of the user:
+                {phone_number}
+            """,
+        )
+
+    
     session = AgentSession(
         stt=openai.STT(model="whisper-1"),
         llm=openai.LLM(model="gpt-4o"),
