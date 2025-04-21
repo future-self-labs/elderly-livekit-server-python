@@ -197,6 +197,70 @@ class Companion(Agent):
             return "Error searching the web"
 
     @function_tool
+    async def schedule_reminder_notification(
+        self,
+        context: RunContext,
+        repeats: bool,
+        weekDay: int,
+        day: int,
+        year: int,
+        hour: int,
+        minute: int,
+        month: int,
+        message: str,
+        title: str,
+    ):
+        """Schedule a reminder notification to be sent to the user as a push notification.
+
+        This tool creates a local notification on the user's phone that will trigger a push notification at the specified time.
+        Specifies when and how often the user should receive the notification. 
+
+        The notification can be repeated, for example if the user asks 'remind me every Wednesday at 10am to take my pills'. then you should pass repeats: true and then fill out the remaining arguments accordingly.
+        
+        Args:
+            repeats: Whether the notification should be repeated.
+            weekDay: The day of the week to trigger the notification.
+            day: The day of the month to trigger the notification.
+            year: The year to trigger the notification.
+            hour: The hour to trigger the notification.
+            minute: The minute to trigger the notification.
+            month: The month to trigger the notification.
+            message: The message to send to the user.
+            title: The title of the reminder notification.
+        """
+        try:
+            # Get the user ID from the context
+            participant_identity = next(
+                iter(get_job_context().room.remote_participants)
+            )
+
+            result = await get_job_context().room.local_participant.perform_rpc(
+                destination_identity=participant_identity,
+                method="schedule_reminder_notification",
+                payload=json.dumps({
+                    "repeats": repeats,
+                    "dateComponents": {
+                        "weekDay": weekDay,
+                        "day": day,
+                        "year": year,
+                        "hour": hour,
+                        "minute": minute,
+                        "month": month,
+                    },
+                    "message": message,
+                    "title": title,
+                }),
+            )
+            
+            return result
+
+        except Exception as error:
+            print(f"Error scheduling reminder notification: {error}")
+            return "I encountered an error while trying to schedule the reminder notification. Please try again later."
+            
+         
+    
+    @function_tool
     async def schedule_task(
         self,
         context: RunContext,
