@@ -195,6 +195,29 @@ class Companion(Agent):
         except Exception as error:
             print(f"Error searching the web: {error}")
             return "Error searching the web"
+        
+    @function_tool
+    async def get_local_time(
+        self,
+        context: RunContext,
+    ):
+        """Get the current local time of the user.
+
+        Returns:
+            A string containing the current local time.
+        """
+        try:
+            participant_identity = next(iter(get_job_context().room.remote_participants))
+
+            result = await get_job_context().room.local_participant.perform_rpc(
+                destination_identity=participant_identity,
+                method="get_local_time",
+                payload=json.dumps({}),
+            )
+            return result
+        except Exception as error:
+            print(f"Error getting local time: {error}")
+            return "I encountered an error while trying to get the local time. Please try again later."
 
     @function_tool
     async def schedule_reminder_notification(
@@ -214,6 +237,8 @@ class Companion(Agent):
 
         This tool creates a local notification on the user's phone that will trigger a push notification at the specified time.
         Specifies when and how often the user should receive the notification. 
+
+        Always use the get_local_time tool to get the current local time of the user.
 
         The notification can be repeated, for example if the user asks 'remind me every Wednesday at 10am to take my pills'. then you should pass repeats: true and then fill out the remaining arguments accordingly.
         
