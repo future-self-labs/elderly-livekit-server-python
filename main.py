@@ -15,7 +15,6 @@ from livekit.agents import (
     RoomInputOptions,
     RunContext,
     function_tool,
-    ToolError,
     get_job_context,
 )
 from livekit.plugins import (
@@ -26,9 +25,43 @@ from livekit.plugins import (
 )
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from zep_cloud.client import Zep
-from lib.n8n import create_scheduled_workflow, delete_scheduled_workflow, get_user_workflows
+
+from lib.n8n import (
+    create_scheduled_workflow,
+    delete_scheduled_workflow,
+    get_user_workflows,
+)
 
 load_dotenv()
+
+
+async def get_api_data(path: str, **kwargs) -> dict:
+    """
+    Fetch data from the API.
+
+    Args:
+        path: The API path to fetch from (should start with '/')
+        **kwargs: Additional arguments to pass to httpx.AsyncClient.request
+
+    Returns:
+        The JSON response as a dictionary
+    """
+    api_url = os.getenv("API_URL")
+    if not api_url:
+        raise ValueError("API_URL environment variable is not set")
+
+    url = f"{api_url}{path}"
+
+    headers = kwargs.pop("headers", {})
+    headers["Content-Type"] = "application/json"
+
+    async with httpx.AsyncClient() as client:
+        response = await client.request(
+            method=kwargs.pop("method", "GET"), url=url, headers=headers, **kwargs
+        )
+        response.raise_for_status()
+        return response.json()
+
 
 zep = Zep(
     api_key=os.getenv("ZEP_API_KEY"),
@@ -37,8 +70,9 @@ zep = Zep(
 
 class Companion(Agent):
     session_id: str
+    user: dict
 
-    def __init__(self, chat_ctx: ChatContext, session_id: str) -> None:
+    def __init__(self, chat_ctx: ChatContext, session_id: str, user: dict) -> None:
         super().__init__(
             chat_ctx=chat_ctx,
             instructions="""
@@ -70,6 +104,7 @@ class Companion(Agent):
         )
 
         self.session_id = session_id
+        self.user = user
 
     # Ingest messages into memory when the user turns are completed
     async def on_user_turn_completed(
@@ -112,26 +147,6 @@ class Companion(Agent):
                 print(messages_to_ingest)
 
             return new_message
-            
-    @function_tool()
-    async def get_phone_number(
-        context: RunContext,
-    ):
-        """Retrieve the user's phone number.
-        
-        Returns:
-            A string containing the user's phone number
-        """
-        try:
-            participant_identity = next(iter(get_job_context().room.remote_participants))
-
-            response = await context.session.room.local_participant.perform_rpc(
-                destination_identity=participant_identity,
-                method="get_phone_number",
-            )
-            return response
-        except Exception:
-            raise ToolError("Unable to retrieve user phone number")
 
     @function_tool
     async def web_search(
@@ -195,7 +210,7 @@ class Companion(Agent):
         except Exception as error:
             print(f"Error searching the web: {error}")
             return "Error searching the web"
-        
+
     @function_tool
     async def get_local_time(
         self,
@@ -207,7 +222,9 @@ class Companion(Agent):
             A string containing the current local time.
         """
         try:
-            participant_identity = next(iter(get_job_context().room.remote_participants))
+            participant_identity = next(
+                iter(get_job_context().room.remote_participants)
+            )
 
             result = await get_job_context().room.local_participant.perform_rpc(
                 destination_identity=participant_identity,
@@ -236,12 +253,12 @@ class Companion(Agent):
         """Schedule a reminder notification to be sent to the user as a push notification.
 
         This tool creates a local notification on the user's phone that will trigger a push notification at the specified time.
-        Specifies when and how often the user should receive the notification. 
+        Specifies when and how often the user should receive the notification.
 
         Always use the get_local_time tool to get the current local time of the user.
 
         The notification can be repeated, for example if the user asks 'remind me every Wednesday at 10am to take my pills'. then you should pass repeats: true and then fill out the remaining arguments accordingly.
-        
+
         Args:
             repeats: Whether the notification should be repeated.
             weekDay: The day of the week to trigger the notification.
@@ -262,34 +279,33 @@ class Companion(Agent):
             result = await get_job_context().room.local_participant.perform_rpc(
                 destination_identity=participant_identity,
                 method="schedule_reminder_notification",
-                payload=json.dumps({
-                    "repeats": repeats,
-                    "dateComponents": {
-                        "weekDay": weekDay,
-                        "day": day,
-                        "year": year,
-                        "hour": hour,
-                        "minute": minute,
-                        "month": month,
-                    },
-                    "message": message,
-                    "title": title,
-                }),
+                payload=json.dumps(
+                    {
+                        "repeats": repeats,
+                        "dateComponents": {
+                            "weekDay": weekDay,
+                            "day": day,
+                            "year": year,
+                            "hour": hour,
+                            "minute": minute,
+                            "month": month,
+                        },
+                        "message": message,
+                        "title": title,
+                    }
+                ),
             )
-            
+
             return result
 
         except Exception as error:
             print(f"Error scheduling reminder notification: {error}")
             return "I encountered an error while trying to schedule the reminder notification. Please try again later."
-            
-         
-    
+
     @function_tool
     async def schedule_task(
         self,
         context: RunContext,
-        phone_number: str,
         cron_expression: str,
         message: str,
         title: str,
@@ -299,7 +315,6 @@ class Companion(Agent):
         This tool creates and activates a workflow in n8n that will trigger a task to be executed at the specified time.
 
         Args:
-            phone_number: The phone number to call. If not known, can be retrieved using the get_phone_number tool.
             cron_expression: The cron expression specifying when to trigger the task.
                 message: The topic or message that the user wants to discuss.
             title: The title of the task.
@@ -317,7 +332,7 @@ class Companion(Agent):
             # Create and activate the workflow in n8n
             await create_scheduled_workflow(
                 cron=cron_expression,
-                phone_number=phone_number,
+                phone_number=self.user["phoneNumber"],
                 user_id=participant_identity,
                 message=message,
                 title=title,
@@ -349,7 +364,7 @@ class Companion(Agent):
 
             # Get user's workflows
             workflows = await get_user_workflows(participant_identity)
-            
+
             # Format the response
             tasks = []
             for workflow in workflows:
@@ -361,7 +376,7 @@ class Companion(Agent):
                     "created_at": workflow["createdAt"],
                 }
                 tasks.append(task)
-            
+
             return tasks
 
         except Exception as error:
@@ -394,10 +409,10 @@ class Companion(Agent):
             # Get user's workflows to verify ownership
             workflows = await get_user_workflows(participant_identity)
             workflow_ids = [w["id"] for w in workflows]
-            
+
             if workflow_id not in workflow_ids:
                 return "I couldn't find that scheduled task. Please make sure you're trying to delete one of your own tasks."
-            
+
             await delete_scheduled_workflow(workflow_id)
             return "I've successfully deleted the scheduled task."
 
@@ -410,11 +425,14 @@ async def entrypoint(ctx: JobContext):
     # Connect to LiveKit
     await ctx.connect()
     participant = await ctx.wait_for_participant()
-
     attributes = participant.attributes
 
+    # Get user from API
+    user = await get_api_data(f"/users/{participant.identity}")
+
     # Get user context
-    sessions = zep.user.get_sessions(user_id=participant.identity)
+    sessions = zep.user.get_sessions(user_id=user["id"])
+    user_context = None
     if len(sessions) > 0:
         sorted_sessions = sorted(sessions, key=lambda x: x.created_at, reverse=True)
         most_recent_session = sorted_sessions[0]
@@ -426,7 +444,7 @@ async def entrypoint(ctx: JobContext):
     # Create a new session
     session = zep.memory.add_session(
         session_id=uuid4(),
-        user_id=participant.identity,
+        user_id=user["id"],
     )
     session_id = session.session_id
 
@@ -456,20 +474,6 @@ async def entrypoint(ctx: JobContext):
             """,
         )
 
-    phone_number = attributes.get("sip.phoneNumber")
-    
-    print("phone_number", phone_number)
-
-    if phone_number is not None:
-        initial_context.add_message(
-            role="user",
-            content=f"""
-                Here's the phone number of the user:
-                {phone_number}
-            """,
-        )
-
-    
     session = AgentSession(
         stt=openai.STT(model="whisper-1"),
         llm=openai.LLM(model="gpt-4o"),
@@ -479,7 +483,7 @@ async def entrypoint(ctx: JobContext):
     )
 
     await session.start(
-        agent=Companion(chat_ctx=initial_context, session_id=session_id),
+        agent=Companion(chat_ctx=initial_context, session_id=session_id, user=user),
         room=ctx.room,
         room_input_options=RoomInputOptions(
             noise_cancellation=noise_cancellation.BVC(),
