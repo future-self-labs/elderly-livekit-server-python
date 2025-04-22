@@ -28,6 +28,35 @@ from zep_cloud.client import Zep
 
 load_dotenv()
 
+
+async def get_api_data(path: str, **kwargs) -> dict:
+    """
+    Fetch data from the API.
+
+    Args:
+        path: The API path to fetch from (should start with '/')
+        **kwargs: Additional arguments to pass to httpx.AsyncClient.request
+
+    Returns:
+        The JSON response as a dictionary
+    """
+    api_url = os.getenv("API_URL")
+    if not api_url:
+        raise ValueError("API_URL environment variable is not set")
+
+    url = f"{api_url}{path}"
+
+    headers = kwargs.pop("headers", {})
+    headers["Content-Type"] = "application/json"
+
+    async with httpx.AsyncClient() as client:
+        response = await client.request(
+            method=kwargs.pop("method", "GET"), url=url, headers=headers, **kwargs
+        )
+        response.raise_for_status()
+        return response.json()
+
+
 zep = Zep(
     api_key=os.getenv("ZEP_API_KEY"),
 )
@@ -180,8 +209,12 @@ async def entrypoint(ctx: JobContext):
     await ctx.connect()
     participant = await ctx.wait_for_participant()
 
+    # Get user from API
+    user = await get_api_data(f"/users/{participant.identity}")
+
     # Get user context
-    sessions = zep.user.get_sessions(user_id=participant.identity)
+    sessions = zep.user.get_sessions(user_id=user["id"])
+    user_context = None
     if len(sessions) > 0:
         sorted_sessions = sorted(sessions, key=lambda x: x.created_at, reverse=True)
         most_recent_session = sorted_sessions[0]
@@ -193,7 +226,7 @@ async def entrypoint(ctx: JobContext):
     # Create a new session
     session = zep.memory.add_session(
         session_id=uuid4(),
-        user_id=participant.identity,
+        user_id=user["id"],
     )
     session_id = session.session_id
 
