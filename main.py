@@ -14,7 +14,6 @@ from livekit.agents import (
     JobContext,
     RoomInputOptions,
     RunContext,
-    ToolError,
     function_tool,
     get_job_context,
 )
@@ -71,8 +70,9 @@ zep = Zep(
 
 class Companion(Agent):
     session_id: str
+    user: dict
 
-    def __init__(self, chat_ctx: ChatContext, session_id: str) -> None:
+    def __init__(self, chat_ctx: ChatContext, session_id: str, user: dict) -> None:
         super().__init__(
             chat_ctx=chat_ctx,
             instructions="""
@@ -104,6 +104,7 @@ class Companion(Agent):
         )
 
         self.session_id = session_id
+        self.user = user
 
     # Ingest messages into memory when the user turns are completed
     async def on_user_turn_completed(
@@ -146,28 +147,6 @@ class Companion(Agent):
                 print(messages_to_ingest)
 
             return new_message
-
-    @function_tool()
-    async def get_phone_number(
-        context: RunContext,
-    ):
-        """Retrieve the user's phone number.
-
-        Returns:
-            A string containing the user's phone number
-        """
-        try:
-            participant_identity = next(
-                iter(get_job_context().room.remote_participants)
-            )
-
-            response = await context.session.room.local_participant.perform_rpc(
-                destination_identity=participant_identity,
-                method="get_phone_number",
-            )
-            return response
-        except Exception:
-            raise ToolError("Unable to retrieve user phone number")
 
     @function_tool
     async def web_search(
@@ -327,7 +306,6 @@ class Companion(Agent):
     async def schedule_task(
         self,
         context: RunContext,
-        phone_number: str,
         cron_expression: str,
         message: str,
         title: str,
@@ -337,7 +315,6 @@ class Companion(Agent):
         This tool creates and activates a workflow in n8n that will trigger a task to be executed at the specified time.
 
         Args:
-            phone_number: The phone number to call. If not known, can be retrieved using the get_phone_number tool.
             cron_expression: The cron expression specifying when to trigger the task.
                 message: The topic or message that the user wants to discuss.
             title: The title of the task.
@@ -355,7 +332,7 @@ class Companion(Agent):
             # Create and activate the workflow in n8n
             await create_scheduled_workflow(
                 cron=cron_expression,
-                phone_number=phone_number,
+                phone_number=self.user["phoneNumber"],
                 user_id=participant_identity,
                 message=message,
                 title=title,
@@ -497,19 +474,6 @@ async def entrypoint(ctx: JobContext):
             """,
         )
 
-    phone_number = attributes.get("sip.phoneNumber")
-
-    print("phone_number", phone_number)
-
-    if phone_number is not None:
-        initial_context.add_message(
-            role="user",
-            content=f"""
-                Here's the phone number of the user:
-                {phone_number}
-            """,
-        )
-
     session = AgentSession(
         stt=openai.STT(model="whisper-1"),
         llm=openai.LLM(model="gpt-4o"),
@@ -519,7 +483,7 @@ async def entrypoint(ctx: JobContext):
     )
 
     await session.start(
-        agent=Companion(chat_ctx=initial_context, session_id=session_id),
+        agent=Companion(chat_ctx=initial_context, session_id=session_id, user=user),
         room=ctx.room,
         room_input_options=RoomInputOptions(
             noise_cancellation=noise_cancellation.BVC(),
