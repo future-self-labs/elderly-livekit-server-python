@@ -1,6 +1,7 @@
 import json
 import os
 import random
+import time  # Import the time module
 from uuid import uuid4
 
 import httpx
@@ -56,9 +57,12 @@ async def get_api_data(path: str, **kwargs) -> dict:
     headers["Content-Type"] = "application/json"
 
     async with httpx.AsyncClient() as client:
+        start_time = time.monotonic()
         response = await client.request(
             method=kwargs.pop("method", "GET"), url=url, headers=headers, **kwargs
         )
+        end_time = time.monotonic()
+        print(f"API call to {path} took: {end_time - start_time:.2f} seconds")
         response.raise_for_status()
         return response.json()
 
@@ -133,6 +137,7 @@ class Companion(Agent):
 
             try:
                 # Ingest messages into memory with assistant roles ignored
+                start_time = time.monotonic()
                 zep.memory.add(
                     self.session_id,
                     # Setting ignore_roles to include "assistant" will make it so that only the user messages are ingested into the graph, but the assistant messages are still used to contextualize the user messages.
@@ -142,6 +147,8 @@ class Companion(Agent):
                     messages=messages_to_ingest,
                     return_context=True,
                 )
+                end_time = time.monotonic()
+                print(f"Zep memory add took: {end_time - start_time:.2f} seconds")
             except Exception as error:
                 print(f"Error ingesting messages: {error}")
                 print(messages_to_ingest)
@@ -178,6 +185,7 @@ class Companion(Agent):
         await self.session.say(random.choice(thinking_messages))
 
         try:
+            start_time = time.monotonic()
             response = httpx.post(
                 "https://api.perplexity.ai/chat/completions",
                 json={
@@ -190,6 +198,8 @@ class Companion(Agent):
                 },
                 timeout=25.0,
             )
+            end_time = time.monotonic()
+            print(f"Perplexity API call took: {end_time - start_time:.2f} seconds")
 
             if response.status_code != 200:
                 print(f"Web search failed: {response.status_code} {response.text}")
@@ -199,12 +209,15 @@ class Companion(Agent):
             participant_identity = next(
                 iter(get_job_context().room.remote_participants)
             )
+            start_time = time.monotonic()
             result = await get_job_context().room.local_participant.perform_rpc(
                 destination_identity=participant_identity,
                 method="web_search",
                 payload=json.dumps(data),
                 response_timeout=25,
             )
+            end_time = time.monotonic()
+            print(f"RPC web_search took: {end_time - start_time:.2f} seconds")
             return result
 
         except Exception as error:
@@ -226,11 +239,14 @@ class Companion(Agent):
                 iter(get_job_context().room.remote_participants)
             )
 
+            start_time = time.monotonic()
             result = await get_job_context().room.local_participant.perform_rpc(
                 destination_identity=participant_identity,
                 method="get_local_time",
                 payload=json.dumps({}),
             )
+            end_time = time.monotonic()
+            print(f"RPC get_local_time took: {end_time - start_time:.2f} seconds")
             return result
         except Exception as error:
             print(f"Error getting local time: {error}")
@@ -276,6 +292,7 @@ class Companion(Agent):
                 iter(get_job_context().room.remote_participants)
             )
 
+            start_time = time.monotonic()
             result = await get_job_context().room.local_participant.perform_rpc(
                 destination_identity=participant_identity,
                 method="schedule_reminder_notification",
@@ -294,6 +311,10 @@ class Companion(Agent):
                         "title": title,
                     }
                 ),
+            )
+            end_time = time.monotonic()
+            print(
+                f"RPC schedule_reminder_notification took: {end_time - start_time:.2f} seconds"
             )
 
             return result
@@ -330,12 +351,17 @@ class Companion(Agent):
             )
 
             # Create and activate the workflow in n8n
+            start_time = time.monotonic()
             await create_scheduled_workflow(
                 cron=cron_expression,
                 phone_number=self.user["phoneNumber"],
                 user_id=participant_identity,
                 message=message,
                 title=title,
+            )
+            end_time = time.monotonic()
+            print(
+                f"N8n create_scheduled_workflow took: {end_time - start_time:.2f} seconds"
             )
 
             return "I've scheduled the call for you. You'll receive a call at the specified time."
@@ -363,7 +389,10 @@ class Companion(Agent):
             )
 
             # Get user's workflows
+            start_time = time.monotonic()
             workflows = await get_user_workflows(participant_identity)
+            end_time = time.monotonic()
+            print(f"N8n get_user_workflows took: {end_time - start_time:.2f} seconds")
 
             # Format the response
             tasks = []
@@ -407,13 +436,23 @@ class Companion(Agent):
             )
 
             # Get user's workflows to verify ownership
+            start_time = time.monotonic()
             workflows = await get_user_workflows(participant_identity)
+            end_time = time.monotonic()
+            print(
+                f"N8n get_user_workflows (for deletion check) took: {end_time - start_time:.2f} seconds"
+            )
             workflow_ids = [w["id"] for w in workflows]
 
             if workflow_id not in workflow_ids:
                 return "I couldn't find that scheduled task. Please make sure you're trying to delete one of your own tasks."
 
+            start_time = time.monotonic()
             await delete_scheduled_workflow(workflow_id)
+            end_time = time.monotonic()
+            print(
+                f"N8n delete_scheduled_workflow took: {end_time - start_time:.2f} seconds"
+            )
             return "I've successfully deleted the scheduled task."
 
         except Exception as error:
@@ -423,29 +462,52 @@ class Companion(Agent):
 
 async def entrypoint(ctx: JobContext):
     # Connect to LiveKit
+    start_time = time.monotonic()
     await ctx.connect()
+    end_time = time.monotonic()
+    print(f"LiveKit connect took: {end_time - start_time:.2f} seconds")
+
+    start_time = time.monotonic()
     participant = await ctx.wait_for_participant()
+    end_time = time.monotonic()
+    print(f"LiveKit wait_for_participant took: {end_time - start_time:.2f} seconds")
+
     attributes = participant.attributes
 
     # Get user from API
+    start_time = time.monotonic()
     user = await get_api_data(f"/users/{participant.identity}")
+    end_time = time.monotonic()
+    print(f"Get user from API took: {end_time - start_time:.2f} seconds")
 
     # Get user context
+    start_time = time.monotonic()
     sessions = zep.user.get_sessions(user_id=user["id"])
+    end_time = time.monotonic()
+    print(f"Zep get sessions took: {end_time - start_time:.2f} seconds")
+
     user_context = None
     if len(sessions) > 0:
         sorted_sessions = sorted(sessions, key=lambda x: x.created_at, reverse=True)
         most_recent_session = sorted_sessions[0]
 
+        start_time = time.monotonic()
         most_recent_memory = zep.memory.get(most_recent_session.session_id)
+        end_time = time.monotonic()
+        print(f"Zep memory get took: {end_time - start_time:.2f} seconds")
+
         user_context = most_recent_memory.context
         print(user_context)
 
     # Create a new session
+    start_time = time.monotonic()
     session = zep.memory.add_session(
         session_id=uuid4(),
         user_id=user["id"],
     )
+    end_time = time.monotonic()
+    print(f"Zep memory add_session took: {end_time - start_time:.2f} seconds")
+
     session_id = session.session_id
 
     # Initialize the context
@@ -482,6 +544,7 @@ async def entrypoint(ctx: JobContext):
         turn_detection=MultilingualModel(),
     )
 
+    start_time = time.monotonic()
     await session.start(
         agent=Companion(chat_ctx=initial_context, session_id=session_id, user=user),
         room=ctx.room,
@@ -489,10 +552,15 @@ async def entrypoint(ctx: JobContext):
             noise_cancellation=noise_cancellation.BVC(),
         ),
     )
+    end_time = time.monotonic()
+    print(f"AgentSession start took: {end_time - start_time:.2f} seconds")
 
+    start_time = time.monotonic()
     await session.generate_reply(
         instructions="Greet the user and offer your assistance."
     )
+    end_time = time.monotonic()
+    print(f"AgentSession generate_reply took: {end_time - start_time:.2f} seconds")
 
 
 if __name__ == "__main__":
