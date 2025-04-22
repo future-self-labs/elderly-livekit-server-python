@@ -266,7 +266,7 @@ class Companion(Agent):
         message: str,
         title: str,
     ):
-        """Schedule a reminder notification to be sent to the user as a push notification.
+        """Schedule a reminder notification to be sent to the user as a push notification. Use this tool when the user asks to be reminded about something. Use the schedule_task tool instead if you want to schedule a task to be discussed over a phone call.
 
         This tool creates a local notification on the user's phone that will trigger a push notification at the specified time.
         Specifies when and how often the user should receive the notification.
@@ -331,7 +331,7 @@ class Companion(Agent):
         message: str,
         title: str,
     ):
-        """Schedule a task to be executed at a specific time.
+        """Schedule a task to be executed at a specific time to be discussed over a phone call. The user will receive a call at the specified time.
 
         This tool creates and activates a workflow in n8n that will trigger a task to be executed at the specified time.
 
