@@ -72,6 +72,61 @@ zep = Zep(
 )
 
 
+class OnboardingAgent(Agent):
+    session_id: str
+
+    def __init__(self, chat_ctx: ChatContext, session_id: str) -> None:
+        super().__init__(
+            chat_ctx=chat_ctx,
+            instructions="You are an onboarding agent. You are responsible for onboarding the user.",
+        )
+
+        self.session_id = session_id
+
+    # Ingest messages into memory when the user turns are completed
+    async def on_user_turn_completed(
+        self, turn_ctx: ChatContext, new_message: ChatMessage
+    ) -> None:
+        if not self.session_id:
+            return new_message
+
+        messages = turn_ctx.items
+        last_message = new_message
+        second_to_last_message = messages[-1]
+
+        if last_message.role == "user" and second_to_last_message.role == "assistant":
+            # Convert messages to the format needed for ingestion
+            messages_to_ingest = []
+            for message in [last_message, second_to_last_message]:
+                # Determine role type based on message role
+                role_type = "user" if message.role == "user" else "assistant"
+
+                messages_to_ingest.append(
+                    {
+                        "content": message.text_content,
+                        "role": "family_member",
+                        "role_type": role_type,
+                    }
+                )
+
+            try:
+                # Ingest messages into memory with assistant roles ignored
+                zep.memory.add(
+                    self.session_id,
+                    # Setting ignore_roles to include "assistant" will make it so that only the user messages are ingested into the graph, but the assistant messages are still used to contextualize the user messages.
+                    # This is important in case the user message itself does not have enough context, such as the message "Yes."
+                    # Additionally, the assistant messages will still be added to the session's message history.
+                    ignore_roles=["assistant"],
+                    messages=messages_to_ingest,
+                    return_context=True,
+                )
+            except Exception as error:
+                print(f"Error ingesting messages: {error}")
+                print(messages_to_ingest)
+
+            return new_message
+
+
 class Companion(Agent):
     session_id: str
     user: dict
@@ -474,36 +529,51 @@ async def entrypoint(ctx: JobContext):
 
     attributes = participant.attributes
 
-    # Get user from API
-    start_time = time.monotonic()
-    user = await get_api_data(f"/users/{participant.identity}")
-    end_time = time.monotonic()
-    print(f"Get user from API took: {end_time - start_time:.2f} seconds")
-
-    # Get user context
-    start_time = time.monotonic()
-    sessions = zep.user.get_sessions(user_id=user["id"])
-    end_time = time.monotonic()
-    print(f"Zep get sessions took: {end_time - start_time:.2f} seconds")
-
+    is_family_member = False
+    user = None
     user_context = None
-    if len(sessions) > 0:
-        sorted_sessions = sorted(sessions, key=lambda x: x.created_at, reverse=True)
-        most_recent_session = sorted_sessions[0]
+    user_id = None
 
+    if participant.identity.startswith("sip_"):
+        phone_number = participant.identity[4:]
+        user_or_family_member = await get_api_data(
+            f"/users/search?phoneNumber={phone_number}"
+        )
+
+        if user_or_family_member["type"] == "family_member":
+            is_family_member = True
+            user_id = user_or_family_member["userId"]
+
+    if not is_family_member:
+        # Get user from API
         start_time = time.monotonic()
-        most_recent_memory = zep.memory.get(most_recent_session.session_id)
+        user = await get_api_data(f"/users/{participant.identity}")
         end_time = time.monotonic()
-        print(f"Zep memory get took: {end_time - start_time:.2f} seconds")
+        print(f"Get user from API took: {end_time - start_time:.2f} seconds")
 
-        user_context = most_recent_memory.context
-        print(user_context)
+        # Get user context
+        start_time = time.monotonic()
+        sessions = zep.user.get_sessions(user_id=user["id"])
+        end_time = time.monotonic()
+        print(f"Zep get sessions took: {end_time - start_time:.2f} seconds")
+
+        if len(sessions) > 0:
+            sorted_sessions = sorted(sessions, key=lambda x: x.created_at, reverse=True)
+            most_recent_session = sorted_sessions[0]
+
+            start_time = time.monotonic()
+            most_recent_memory = zep.memory.get(most_recent_session.session_id)
+            end_time = time.monotonic()
+            print(f"Zep memory get took: {end_time - start_time:.2f} seconds")
+
+            user_context = most_recent_memory.context
+            print(user_context)
 
     # Create a new session
     start_time = time.monotonic()
     session = zep.memory.add_session(
         session_id=uuid4(),
-        user_id=user["id"],
+        user_id=user_id,
     )
     end_time = time.monotonic()
     print(f"Zep memory add_session took: {end_time - start_time:.2f} seconds")
@@ -544,9 +614,16 @@ async def entrypoint(ctx: JobContext):
         turn_detection=MultilingualModel(),
     )
 
+    agent = None
+
+    if is_family_member:
+        agent = OnboardingAgent(chat_ctx=initial_context, session_id=session_id)
+    else:
+        agent = Companion(chat_ctx=initial_context, session_id=session_id, user=user)
+
     start_time = time.monotonic()
     await session.start(
-        agent=Companion(chat_ctx=initial_context, session_id=session_id, user=user),
+        agent=agent,
         room=ctx.room,
         room_input_options=RoomInputOptions(
             noise_cancellation=noise_cancellation.BVC(),
