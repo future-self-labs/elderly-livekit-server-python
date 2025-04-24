@@ -18,8 +18,17 @@ from livekit.agents import (
     function_tool,
     get_job_context,
 )
+from livekit.agents import (
+    llm as llm_base,
+)
+from livekit.agents import stt as stt_base
+from livekit.agents import (
+    tts as tts_base,
+)
 from livekit.plugins import (
+    deepgram,
     elevenlabs,
+    google,
     noise_cancellation,
     openai,
     silero,
@@ -70,6 +79,91 @@ async def get_api_data(path: str, **kwargs) -> dict:
 zep = Zep(
     api_key=os.getenv("ZEP_API_KEY"),
 )
+
+
+def getTTSModel(model_name: str | None) -> tts_base.TTS:
+    """Maps TTS model name string to a LiveKit TTS plugin instance."""
+    if model_name == "elevenlabs-tts":
+        return elevenlabs.TTS()
+    elif model_name == "openai-gpt-4o-mini-tts":
+        return openai.TTS(model="gpt-4o-mini-tts")
+
+    elif model_name == "openai-tts-1":
+        return openai.TTS(model="tts-1")
+
+    elif model_name == "openai-tts-1-hd":
+        return openai.TTS(model="tts-1-hd")
+
+    elif model_name == "deepgram-aura-2-odysseus-en":
+        return deepgram.TTS(model="aura-2-odysseus-en")
+
+    elif model_name == "deepgram-aura-2-thalia-en":
+        return deepgram.TTS(model="aura-2-thalia-en")
+
+    elif model_name == "deepgram-aura-asteria-en":
+        return deepgram.TTS(model="aura-asteria-en")
+
+    elif model_name is None:
+        print("Warning: No TTS model specified, using default ElevenLabs.")
+        return elevenlabs.TTS()  # Default if not specified
+    else:
+        raise ValueError(f"Unsupported TTS model: {model_name}")
+
+
+def getSTTModel(model_name: str | None) -> stt_base.STT:
+    """Maps STT model name string to a LiveKit STT plugin instance."""
+    if model_name == "openai-whisper-1":
+        return openai.STT(model="whisper-1")
+
+    elif model_name == "openai-gpt-4o-transcribe":
+        return openai.STT(model="gpt-4o-transcribe")
+
+    elif model_name == "openai-gpt-4o-mini-transcribe":
+        return openai.STT(model="gpt-4o-mini-transcribe")
+
+    elif model_name == "deepgram-nova-3":
+        return deepgram.STT(model="nova-3")
+
+    elif model_name is None:
+        print("Warning: No STT model specified, using default Whisper.")
+        return openai.STT(model="whisper-1")  # Default if not specified
+    else:
+        raise ValueError(f"Unsupported STT model: {model_name}")
+
+
+def getLLMModel(model_name: str | None) -> llm_base.LLM:
+    """Maps LLM model name string to a LiveKit LLM plugin instance."""
+    if model_name == "GPT-4o":
+        return openai.LLM(model="gpt-4o")
+    elif model_name == "openai-gpt-4o-realtime":
+        return openai.LLM(model="gpt-4o-realtime-preview")
+
+    elif model_name == "openai-gpt-4o-mini-realtime":
+        return openai.LLM(model="gpt-4o-mini-realtime-preview")
+
+    elif model_name == "google-gemini-1.5-flash":
+        return google.LLM(model="gemini-1.5-flash")
+
+    elif model_name == "google-gemini-2.0-flash":
+        return google.LLM(model="gemini-2.0-flash")
+
+    elif model_name == "google-gemini-2.0-flash-lite":
+        return google.LLM(model="gemini-2.0-flash-lite")
+
+    elif model_name == "google-gemini-2.5-flash-preview":
+        return google.LLM(model="gemini-2.5-flash-preview-04-17")
+
+    elif model_name == "google-gemini-2.5-pro-preview":
+        return google.LLM(model="gemini-2.5-pro-preview-03-25")
+
+    elif model_name == "google-gemini-1.5-pro":
+        return google.LLM(model="gemini-1.5-pro")
+
+    elif model_name is None:
+        print("Warning: No LLM model specified, using default GPT-4o.")
+        return openai.LLM(model="gpt-4o")  # Default if not specified
+    else:
+        raise ValueError(f"Unsupported LLM model: {model_name}")
 
 
 class Companion(Agent):
@@ -536,10 +630,44 @@ async def entrypoint(ctx: JobContext):
             """,
         )
 
+    # Get preferred models from attributes, with fallbacks
+    tts_model_name = attributes.get("tts")
+    stt_model_name = attributes.get("stt")
+    llm_model_name = attributes.get("llm")
+
+    print(
+        f"Received user preferences TTS: {tts_model_name or 'Default'}, STT: {stt_model_name or 'Default'}, LLM: {llm_model_name or 'Default'}"
+    )
+
+    # Get model instances using mapping functions
+    try:
+        tts_plugin = getTTSModel(tts_model_name)
+        stt_plugin = getSTTModel(stt_model_name)
+        llm_plugin = getLLMModel(llm_model_name)
+    except ValueError as e:
+        print(f"Error initializing models: {e}")
+        # Handle error appropriately, maybe disconnect or use guaranteed defaults
+        print("Falling back to default models due to error.")
+        tts_plugin = elevenlabs.TTS()
+        stt_plugin = openai.STT(model="whisper-1")
+        llm_plugin = openai.LLM(model="gpt-4o")
+
+    # Determine STT/TTS based on LLM choice
+    session_stt = stt_plugin
+    session_tts = tts_plugin
+    if llm_model_name in ["gpt-4o-realtime-preview", "gpt-4o-mini-realtime-preview"]:
+        print(
+            f"Realtime LLM ('{llm_model_name}') selected, disabling separate STT/TTS plugins."
+        )
+        session_stt = None
+        session_tts = None
+
+    print(f"Using STT: {session_stt}, TTS: {session_tts}, LLM: {llm_plugin}")
+
     session = AgentSession(
-        stt=openai.STT(model="whisper-1"),
-        llm=openai.LLM(model="gpt-4o"),
-        tts=elevenlabs.TTS(),
+        stt=session_stt,
+        llm=llm_plugin,
+        tts=session_tts,
         vad=silero.VAD.load(),
         turn_detection=MultilingualModel(),
     )
