@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.28.1",
-    "livekit-agents[cartesia,deepgram,elevenlabs,openai,silero,turn-detector]~=1.0",
+    "livekit-agents[cartesia,deepgram,elevenlabs,openai,google,silero,turn-detector]~=1.0",
     "livekit-plugins-noise-cancellation~=0.2",
     "python-dotenv>=1.1.0",
     "ruff>=0.11.5",
