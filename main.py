@@ -189,7 +189,7 @@ class OnboardingAgent(Agent):
                 - Build a comprehensive understanding of who they are
                 - Identify ways you can provide personalized assistance
                 - Show continuity across future sessions with the primary user
-            """
+            """,
         )
 
         self.session_id = session_id
@@ -665,6 +665,7 @@ async def entrypoint(ctx: JobContext):
         # Get user context
         start_time = time.monotonic()
         sessions = zep.user.get_sessions(user_id=user["id"])
+        user_id = user["id"]
         end_time = time.monotonic()
         print(f"Zep get sessions took: {end_time - start_time:.2f} seconds")
 
