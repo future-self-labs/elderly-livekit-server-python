@@ -189,6 +189,11 @@ class OnboardingAgent(Agent):
                 - Build a comprehensive understanding of who they are
                 - Identify ways you can provide personalized assistance
                 - Show continuity across future sessions with the primary user
+
+                When the user asks you about reminders of scheduling: 
+                - Always confirm with the user whether they want to receive a notification or a phone call.
+                - If they want a notification, use the schedule_reminder_notification tool.
+                - If they want a phone call, use the schedule_task tool.
             """,
         )
 
