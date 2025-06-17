@@ -31,9 +31,7 @@ from livekit.plugins import (
     google,
     noise_cancellation,
     openai,
-    silero,
 )
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from zep_cloud.client import Zep
 
 from lib.n8n import (
@@ -758,11 +756,11 @@ async def entrypoint(ctx: JobContext):
     print(f"Using STT: {session_stt}, TTS: {session_tts}, LLM: {llm_plugin}")
 
     session = AgentSession(
-        stt=session_stt,
-        llm=llm_plugin,
-        tts=session_tts,
-        vad=silero.VAD.load(),
-        turn_detection=MultilingualModel(),
+        # stt=session_stt,
+        llm=openai.realtime.RealtimeModel(voice="coral")
+        # tts=session_tts,
+        # vad=silero.VAD.load(),
+        # turn_detection=MultilingualModel(),
     )
 
     agent = None
