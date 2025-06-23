@@ -18,20 +18,12 @@ from livekit.agents import (
     function_tool,
     get_job_context,
 )
-from livekit.agents import (
-    llm as llm_base,
-)
-from livekit.agents import stt as stt_base
-from livekit.agents import (
-    tts as tts_base,
-)
 from livekit.plugins import (
-    deepgram,
-    elevenlabs,
-    google,
     noise_cancellation,
     openai,
+    silero,
 )
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from zep_cloud.client import Zep
 
 from lib.n8n import (
@@ -79,95 +71,11 @@ zep = Zep(
 )
 
 
-def getTTSModel(model_name: str | None) -> tts_base.TTS:
-    """Maps TTS model name string to a LiveKit TTS plugin instance."""
-    if model_name == "elevenlabs-tts":
-        return elevenlabs.TTS()
-    elif model_name == "openai-gpt-4o-mini-tts":
-        return openai.TTS(model="gpt-4o-mini-tts")
-
-    elif model_name == "openai-tts-1":
-        return openai.TTS(model="tts-1")
-
-    elif model_name == "openai-tts-1-hd":
-        return openai.TTS(model="tts-1-hd")
-
-    elif model_name == "deepgram-aura-2-odysseus-en":
-        return deepgram.TTS(model="aura-2-odysseus-en")
-
-    elif model_name == "deepgram-aura-2-thalia-en":
-        return deepgram.TTS(model="aura-2-thalia-en")
-
-    elif model_name == "deepgram-aura-asteria-en":
-        return deepgram.TTS(model="aura-asteria-en")
-
-    elif model_name is None:
-        print("Warning: No TTS model specified, using default ElevenLabs.")
-        return elevenlabs.TTS()  # Default if not specified
-    else:
-        raise ValueError(f"Unsupported TTS model: {model_name}")
-
-
-def getSTTModel(model_name: str | None) -> stt_base.STT:
-    """Maps STT model name string to a LiveKit STT plugin instance."""
-    if model_name == "openai-whisper-1":
-        return openai.STT(model="whisper-1")
-
-    elif model_name == "openai-gpt-4o-transcribe":
-        return openai.STT(model="gpt-4o-transcribe")
-
-    elif model_name == "openai-gpt-4o-mini-transcribe":
-        return openai.STT(model="gpt-4o-mini-transcribe")
-
-    elif model_name == "deepgram-nova-3":
-        return deepgram.STT(model="nova-3")
-
-    elif model_name is None:
-        print("Warning: No STT model specified, using default Whisper.")
-        return openai.STT(model="whisper-1")  # Default if not specified
-    else:
-        raise ValueError(f"Unsupported STT model: {model_name}")
-
-
-def getLLMModel(model_name: str | None) -> llm_base.LLM:
-    """Maps LLM model name string to a LiveKit LLM plugin instance."""
-    if model_name == "GPT-4o":
-        return openai.LLM(model="gpt-4o")
-    elif model_name == "openai-gpt-4o-realtime":
-        return openai.LLM(model="gpt-4o-realtime-preview")
-
-    elif model_name == "openai-gpt-4o-mini-realtime":
-        return openai.LLM(model="gpt-4o-mini-realtime-preview")
-
-    elif model_name == "google-gemini-1.5-flash":
-        return google.LLM(model="gemini-1.5-flash")
-
-    elif model_name == "google-gemini-2.0-flash":
-        return google.LLM(model="gemini-2.0-flash")
-
-    elif model_name == "google-gemini-2.0-flash-lite":
-        return google.LLM(model="gemini-2.0-flash-lite")
-
-    elif model_name == "google-gemini-2.5-flash-preview":
-        return google.LLM(model="gemini-2.5-flash-preview-04-17")
-
-    elif model_name == "google-gemini-2.5-pro-preview":
-        return google.LLM(model="gemini-2.5-pro-preview-03-25")
-
-    elif model_name == "google-gemini-1.5-pro":
-        return google.LLM(model="gemini-1.5-pro")
-
-    elif model_name is None:
-        print("Warning: No LLM model specified, using default GPT-4o.")
-        return openai.LLM(model="gpt-4o")  # Default if not specified
-    else:
-        raise ValueError(f"Unsupported LLM model: {model_name}")
-
-
 class OnboardingAgent(Agent):
     session_id: str
+    user: dict
 
-    def __init__(self, chat_ctx: ChatContext, session_id: str) -> None:
+    def __init__(self, chat_ctx: ChatContext, session_id: str, user: dict) -> None:
         super().__init__(
             chat_ctx=chat_ctx,
             instructions="""
@@ -196,11 +104,17 @@ class OnboardingAgent(Agent):
         )
 
         self.session_id = session_id
+        self.user = user
 
     # Ingest messages into memory when the user turns are completed
     async def on_user_turn_completed(
         self, turn_ctx: ChatContext, new_message: ChatMessage
     ) -> None:
+        print("on_user_turn_completed")
+        print(turn_ctx)
+        print(new_message)
+        print(self.session_id)
+        print(self.user)
         if not self.session_id:
             return new_message
 
@@ -218,10 +132,13 @@ class OnboardingAgent(Agent):
                 messages_to_ingest.append(
                     {
                         "content": message.text_content,
-                        "role": "family_member",
+                        "role": self.user["name"],
                         "role_type": role_type,
                     }
                 )
+
+            print("messages_to_ingest")
+            print(messages_to_ingest)
 
             try:
                 # Ingest messages into memory with assistant roles ignored
@@ -283,6 +200,12 @@ class Companion(Agent):
     async def on_user_turn_completed(
         self, turn_ctx: ChatContext, new_message: ChatMessage
     ) -> None:
+        print("on_user_turn_completed")
+        print(turn_ctx)
+        print(new_message)
+        print(self.session_id)
+        print(self.user)
+
         if not self.session_id:
             return new_message
 
@@ -301,8 +224,12 @@ class Companion(Agent):
                     {
                         "content": message.text_content,
                         "role_type": role_type,
+                        "role": self.user["name"],
                     }
                 )
+
+            print("messages_to_ingest")
+            print(messages_to_ingest)
 
             try:
                 # Ingest messages into memory with assistant roles ignored
@@ -643,52 +570,50 @@ async def entrypoint(ctx: JobContext):
 
     attributes = participant.attributes
 
-    is_family_member = False
     user = None
-    user_context = None
-    user_id = None
+    family_context = None
+    family_id = None
+    is_family_owner = False
+
+    print(f"Participant identity: {participant.identity}")
 
     if participant.identity.startswith("sip_"):
         phone_number = participant.identity[4:]
         user_or_family_member = await get_api_data(
             f"/users/search?phoneNumber={phone_number}"
         )
-
-        if user_or_family_member["type"] == "family_member":
-            is_family_member = True
-            user_id = user_or_family_member["userId"]
-
-    if not is_family_member:
-        # Get user from API
-        start_time = time.monotonic()
+        family_id = user_or_family_member["familyId"]
+        is_family_owner = user_or_family_member["type"] == "owner"
+    else:
         user = await get_api_data(f"/users/{participant.identity}")
-        end_time = time.monotonic()
-        print(f"Get user from API took: {end_time - start_time:.2f} seconds")
+        family_id = user["familyId"]
+        is_family_owner = user["type"] == "owner"
 
-        # Get user context
+    print(f"Family ID: {family_id}")
+
+    # Get family context
+    start_time = time.monotonic()
+    sessions = zep.user.get_sessions(user_id=family_id)
+    end_time = time.monotonic()
+    print(f"Zep get sessions took: {end_time - start_time:.2f} seconds")
+
+    if len(sessions) > 0:
+        sorted_sessions = sorted(sessions, key=lambda x: x.created_at, reverse=True)
+        most_recent_session = sorted_sessions[0]
+
         start_time = time.monotonic()
-        sessions = zep.user.get_sessions(user_id=user["id"])
-        user_id = user["id"]
+        most_recent_memory = zep.memory.get(most_recent_session.session_id)
         end_time = time.monotonic()
-        print(f"Zep get sessions took: {end_time - start_time:.2f} seconds")
+        print(f"Zep memory get took: {end_time - start_time:.2f} seconds")
 
-        if len(sessions) > 0:
-            sorted_sessions = sorted(sessions, key=lambda x: x.created_at, reverse=True)
-            most_recent_session = sorted_sessions[0]
-
-            start_time = time.monotonic()
-            most_recent_memory = zep.memory.get(most_recent_session.session_id)
-            end_time = time.monotonic()
-            print(f"Zep memory get took: {end_time - start_time:.2f} seconds")
-
-            user_context = most_recent_memory.context
-            print(user_context)
+        family_context = most_recent_memory.context
+        print(family_context)
 
     # Create a new session
     start_time = time.monotonic()
     session = zep.memory.add_session(
         session_id=uuid4(),
-        user_id=user_id,
+        user_id=family_id,
     )
     end_time = time.monotonic()
     print(f"Zep memory add_session took: {end_time - start_time:.2f} seconds")
@@ -697,15 +622,15 @@ async def entrypoint(ctx: JobContext):
 
     # Initialize the context
     initial_context = ChatContext()
-    if user_context:
+    if family_context:
         initial_context.add_message(
             role="user",
             content=f"""
-                Here's what you already know about me:
+                Here's what you already know about me and my family:
 
-                <user_context>
-                {user_context}
-                </user_context>
+                <family_context>
+                {family_context}
+                </family_context>
             """,
         )
 
@@ -713,7 +638,7 @@ async def entrypoint(ctx: JobContext):
         initial_context.add_message(
             role="user",
             content=f"""
-                Here's what I want to discuss with you:
+                Here's what I want to discuss:
 
                 <user_request>
                 {attributes["initialRequest"]}
@@ -721,54 +646,29 @@ async def entrypoint(ctx: JobContext):
             """,
         )
 
-    # Get preferred models from attributes, with fallbacks
-    tts_model_name = attributes.get("tts")
-    stt_model_name = attributes.get("stt")
-    llm_model_name = attributes.get("llm")
-
-    print(
-        f"Received user preferences TTS: {tts_model_name or 'Default'}, STT: {stt_model_name or 'Default'}, LLM: {llm_model_name or 'Default'}"
-    )
-
-    # Get model instances using mapping functions
-    try:
-        tts_plugin = getTTSModel(tts_model_name)
-        stt_plugin = getSTTModel(stt_model_name)
-        llm_plugin = getLLMModel(llm_model_name)
-    except ValueError as e:
-        print(f"Error initializing models: {e}")
-        # Handle error appropriately, maybe disconnect or use guaranteed defaults
-        print("Falling back to default models due to error.")
-        tts_plugin = elevenlabs.TTS()
-        stt_plugin = openai.STT(model="whisper-1")
-        llm_plugin = openai.LLM(model="gpt-4o")
-
-    # Determine STT/TTS based on LLM choice
-    session_stt = stt_plugin
-    session_tts = tts_plugin
-    if llm_model_name in ["gpt-4o-realtime-preview", "gpt-4o-mini-realtime-preview"]:
-        print(
-            f"Realtime LLM ('{llm_model_name}') selected, disabling separate STT/TTS plugins."
-        )
-        session_stt = None
-        session_tts = None
-
-    print(f"Using STT: {session_stt}, TTS: {session_tts}, LLM: {llm_plugin}")
-
+    # TODO: figure out how to make turn detection work with realtime model
+    # currently the end_turn is not being called when the user stops talking
+    # which means we're not saving the context to Zep
+    # https://docs.livekit.io/agents/build/turns/
     session = AgentSession(
-        # stt=session_stt,
-        llm=openai.realtime.RealtimeModel(voice="coral")
-        # tts=session_tts,
-        # vad=silero.VAD.load(),
-        # turn_detection=MultilingualModel(),
+        llm=openai.realtime.RealtimeModel(
+            voice="coral",
+        ),
+        turn_detection=MultilingualModel(),
+        stt=openai.realtime.RealtimeModel(
+            model="whisper-1",
+        ),
+        vad=silero.VAD.load(),
     )
 
     agent = None
 
-    if is_family_member:
-        agent = OnboardingAgent(chat_ctx=initial_context, session_id=session_id)
-    else:
+    if is_family_owner:
         agent = Companion(chat_ctx=initial_context, session_id=session_id, user=user)
+    else:
+        agent = OnboardingAgent(
+            chat_ctx=initial_context, session_id=session_id, user=user
+        )
 
     start_time = time.monotonic()
     await session.start(
