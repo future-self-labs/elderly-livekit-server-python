@@ -13,6 +13,7 @@ from livekit.agents import (
     ChatContext,
     ChatMessage,
     JobContext,
+    JobProcess,
     RoomInputOptions,
     RunContext,
     function_tool,
@@ -21,7 +22,9 @@ from livekit.agents import (
 from livekit.plugins import (
     noise_cancellation,
     openai,
+    silero,
 )
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from zep_cloud.client import Zep
 
 from lib.n8n import (
@@ -47,6 +50,8 @@ async def get_api_data(path: str, **kwargs) -> dict:
     api_url = os.getenv("API_URL")
     if not api_url:
         raise ValueError("API_URL environment variable is not set")
+    else:
+        print(f"API_URL: {api_url}")
 
     url = f"{api_url}{path}"
 
@@ -188,6 +193,7 @@ class Companion(Agent):
     async def on_user_turn_completed(
         self, turn_ctx: ChatContext, new_message: ChatMessage
     ) -> None:
+        print("on_user_turn_completed")
         if not self.session_id:
             return new_message
 
@@ -627,7 +633,13 @@ async def entrypoint(ctx: JobContext):
         )
 
     session = AgentSession(
-        llm=openai.realtime.RealtimeModel(voice="coral"),
+        allow_interruptions=True,
+        turn_detection=MultilingualModel(),
+        llm=openai.realtime.RealtimeModel(
+            voice="coral", turn_detection=None, input_audio_transcription=None
+        ),
+        stt=openai.STT(),
+        vad=ctx.proc.userdata["vad"],
     )
 
     agent = None
@@ -656,7 +668,15 @@ async def entrypoint(ctx: JobContext):
     print(f"AgentSession generate_reply took: {end_time - start_time:.2f} seconds")
 
 
+def prewarm(proc: JobProcess):
+    proc.userdata["vad"] = silero.VAD.load()
+
+
 if __name__ == "__main__":
     agents.cli.run_app(
-        agents.WorkerOptions(agent_name="noah", entrypoint_fnc=entrypoint)
+        agents.WorkerOptions(
+            agent_name="noah",
+            entrypoint_fnc=entrypoint,
+            prewarm_fnc=prewarm,
+        )
     )
