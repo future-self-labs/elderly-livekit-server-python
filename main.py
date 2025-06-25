@@ -1,7 +1,6 @@
 import asyncio
 import json
 import os
-import random
 import time  # Import the time module
 from uuid import uuid4
 
@@ -261,16 +260,6 @@ class Companion(Agent):
         Returns:
             A string containing the search results and relevant information.
         """
-
-        # Tell the user we're looking things up
-        thinking_messages = [
-            "Let me look that up...",
-            "One moment while I check...",
-            "I'll find that information for you...",
-            "Just a second while I search...",
-            "Looking into that now...",
-        ]
-        await self.session.say(random.choice(thinking_messages))
 
         try:
             start_time = time.monotonic()
