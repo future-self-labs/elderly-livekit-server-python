@@ -10,6 +10,11 @@ def get_n8n_api_key() -> str:
     return os.getenv("N8N_API_KEY", "")
 
 
+def get_n8n_url() -> str:
+    """Get the n8n URL from environment variables."""
+    return os.getenv("N8N_URL", "https://n8n-service-vepa.onrender.com")
+
+
 async def get_workflow_template(workflow_name: str) -> str:
     """Get the workflow template from the workflows directory."""
     try:
@@ -34,7 +39,7 @@ async def get_user_workflows(user_id: str) -> List[Dict[str, Any]]:
         async with httpx.AsyncClient() as client:
             # Get all workflows
             response = await client.get(
-                "https://n8n.subthread.studio/api/v1/workflows",
+                f"{get_n8n_url()}/api/v1/workflows",
                 headers={
                     "Content-Type": "application/json",
                     "X-N8N-API-KEY": n8n_api_key,
@@ -110,7 +115,7 @@ async def create_scheduled_workflow(
         async with httpx.AsyncClient() as client:
             # Create workflow
             response = await client.post(
-                "https://n8n.subthread.studio/api/v1/workflows",
+                f"{get_n8n_url()}/api/v1/workflows",
                 json=workflow_json,
                 headers={
                     "Content-Type": "application/json",
@@ -125,7 +130,7 @@ async def create_scheduled_workflow(
 
             # Activate the workflow
             activate_response = await client.post(
-                f"https://n8n.subthread.studio/api/v1/workflows/{data['id']}/activate",
+                f"{get_n8n_url()}/api/v1/workflows/{data['id']}/activate",
                 headers={
                     "Content-Type": "application/json",
                     "X-N8N-API-KEY": n8n_api_key,
@@ -157,7 +162,7 @@ async def delete_scheduled_workflow(workflow_id: str) -> None:
         async with httpx.AsyncClient() as client:
             # Delete the workflow
             response = await client.delete(
-                f"https://n8n.subthread.studio/api/v1/workflows/{workflow_id}",
+                f"{get_n8n_url()}/api/v1/workflows/{workflow_id}",
                 headers={
                     "Content-Type": "application/json",
                     "X-N8N-API-KEY": n8n_api_key,
