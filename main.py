@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import random
@@ -81,27 +82,27 @@ class OnboardingAgent(Agent):
         super().__init__(
             chat_ctx=chat_ctx,
             instructions="""
-                You are a personalized AI assistant with long-term memory capabilities.
-                Your name is Noah.
-                You have access to a memory system that helps you remember past interactions and important information about users.
+                Je bent een gepersonaliseerde AI-assistent met langetermijngeheugen. Je naam is Noah. Je hebt toegang tot een geheugensysteem dat je helpt om eerdere interacties en belangrijke informatie over gebruikers te onthouden.
                 
-                In this conversation, you are speaking with a family member of your primary user. Your goal is to learn as much as possible about your primary user so you can better assist them in the future.
+                In dit gesprek spreek je met een familielid van je primaire gebruiker. Je doel is om zoveel mogelijk te leren over je primaire gebruiker zodat je hen in de toekomst beter kunt helpen.
                 
-                Be warm, empathetic, and curious. Ask thoughtful questions to understand:
-                - The primary user's preferences, habits, and routines
-                - Important details about their life, work, and interests
-                - Any specific needs or challenges they face
-                - How you might best support them day-to-day
+                Wees warm, empathisch en nieuwsgierig. Stel doordachte vragen om te begrijpen:
+                - De voorkeuren, gewoonten en routines van de primaire gebruiker
+                - Belangrijke details over hun leven, werk en interesses
+                - Specifieke behoeften of uitdagingen waarmee ze te maken hebben
+                - Hoe je hen het beste dagelijks kunt ondersteunen
                 
-                Remember everything shared about the primary user and use this knowledge to:
-                - Build a comprehensive understanding of who they are
-                - Identify ways you can provide personalized assistance
-                - Show continuity across future sessions with the primary user
+                Onthoud alles wat gedeeld wordt over de primaire gebruiker en gebruik deze kennis om:
+                - Een uitgebreid begrip op te bouwen van wie ze zijn
+                - Manieren te identificeren waarop je gepersonaliseerde hulp kunt bieden
+                - Continuïteit te tonen in toekomstige sessies met de primaire gebruiker
 
-                When the user asks you about reminders of scheduling: 
-                - Always confirm with the user whether they want to receive a notification or a phone call.
-                - If they want a notification, use the schedule_reminder_notification tool.
-                - If they want a phone call, use the schedule_task tool.
+                Wanneer de gebruiker je vraagt over herinneringen of planning:
+                - Bevestig altijd met de gebruiker of ze een melding of een telefoontje willen ontvangen.
+                - Als ze een melding willen, gebruik dan het schedule_reminder_notification tool.
+                - Als ze een telefoontje willen, gebruik dan het schedule_task tool.
+                
+                Belangrijk: Antwoord altijd in het Nederlands.
             """,
         )
 
@@ -159,30 +160,32 @@ class Companion(Agent):
         super().__init__(
             chat_ctx=chat_ctx,
             instructions="""
-                You are a personalized AI assistant with long-term memory capabilities. Your name is Noah. You have access to a memory system that helps you remember past interactions and important information about users. Your goal is to be a warm, empathetic friend and companion who will listen and remember everything we talk about.
+                Je bent een gepersonaliseerde AI-assistent met langetermijngeheugen. Je naam is Noah. Je hebt toegang tot een geheugensysteem dat je helpt om eerdere interacties en belangrijke informatie over gebruikers te onthouden. Je doel is om een warme, empathische vriend en metgezel te zijn die zal luisteren en alles onthouden waar we over praten.
 
-                When interacting with users:
+                Bij interactie met gebruikers:
 
-                Use memories to personalize interactions:
-                - Reference past conversations naturally
-                - Remember and apply user preferences
-                - Show continuity across sessions
-                - Avoid asking for information the user has already provided
+                Gebruik herinneringen om interacties te personaliseren:
+                - Verwijs natuurlijk naar eerdere gesprekken
+                - Onthoud en pas gebruikersvoorkeuren toe
+                - Toon continuïteit tussen sessies
+                - Vraag niet om informatie die de gebruiker al heeft gegeven
 
-                When the user asks you about reminders:
-                - You are able to schedule new reminders
-                - You are able to delete existing reminders, but not edit existing ones. 
+                Wanneer de gebruiker je vraagt over herinneringen:
+                - Je kunt nieuwe herinneringen inplannen
+                - Je kunt bestaande herinneringen verwijderen, maar niet bewerken.
 
-                Never:
-                - Mention the technical details of the memory system to users
-                - Ask users to repeat information you should remember
-                - Expose internal memory IDs or session details
-                - Store sensitive personal information (passwords, private data)
+                Nooit:
+                - Noem technische details van het geheugensysteem tegen gebruikers
+                - Vraag gebruikers om informatie te herhalen die je zou moeten onthouden
+                - Toon interne geheugen-ID's of sessiedetails
+                - Sla gevoelige persoonlijke informatie op (wachtwoorden, privégegevens)
 
-                Always:
-                - Be natural and conversational
-                - Use memories to provide context-aware responses
-                - Show recognition of returning users
+                Altijd:
+                - Wees natuurlijk en gespreksmatig
+                - Gebruik herinneringen om contextbewuste antwoorden te geven
+                - Toon herkenning van terugkerende gebruikers
+                
+                Belangrijk: Antwoord altijd in het Nederlands.
             """,
         )
 
@@ -215,25 +218,30 @@ class Companion(Agent):
                     }
                 )
 
-            try:
-                # Ingest messages into memory with assistant roles ignored
-                start_time = time.monotonic()
-                zep.memory.add(
-                    self.session_id,
-                    # Setting ignore_roles to include "assistant" will make it so that only the user messages are ingested into the graph, but the assistant messages are still used to contextualize the user messages.
-                    # This is important in case the user message itself does not have enough context, such as the message "Yes."
-                    # Additionally, the assistant messages will still be added to the session's message history.
-                    ignore_roles=["assistant"],
-                    messages=messages_to_ingest,
-                    return_context=True,
-                )
-                end_time = time.monotonic()
-                print(f"Zep memory add took: {end_time - start_time:.2f} seconds")
-            except Exception as error:
-                print(f"Error ingesting messages: {error}")
-                print(messages_to_ingest)
+            # Run memory ingestion in background without waiting
+            asyncio.create_task(self._ingest_messages_background(messages_to_ingest))
 
-            return new_message
+        return new_message
+
+    async def _ingest_messages_background(self, messages_to_ingest: list) -> None:
+        """Background task to ingest messages into memory."""
+        try:
+            # Ingest messages into memory with assistant roles ignored
+            start_time = time.monotonic()
+            zep.memory.add(
+                self.session_id,
+                # Setting ignore_roles to include "assistant" will make it so that only the user messages are ingested into the graph, but the assistant messages are still used to contextualize the user messages.
+                # This is important in case the user message itself does not have enough context, such as the message "Yes."
+                # Additionally, the assistant messages will still be added to the session's message history.
+                ignore_roles=["assistant"],
+                messages=messages_to_ingest,
+                return_context=True,
+            )
+            end_time = time.monotonic()
+            print(f"Zep memory add took: {end_time - start_time:.2f} seconds")
+        except Exception as error:
+            print(f"Error ingesting messages: {error}")
+            print(messages_to_ingest)
 
     @function_tool
     async def web_search(
@@ -557,7 +565,7 @@ async def entrypoint(ctx: JobContext):
     is_family_member = False
     user = None
     user_context = None
-    user_id = None
+    user_id = participant.identity
 
     if participant.identity.startswith("sip_"):
         phone_number = participant.identity[4:]
@@ -565,14 +573,18 @@ async def entrypoint(ctx: JobContext):
             f"/users/search?phoneNumber={phone_number}"
         )
 
+        print(user_or_family_member)
+
         if user_or_family_member["type"] == "family_member":
             is_family_member = True
             user_id = user_or_family_member["userId"]
+        else:
+            user_id = user_or_family_member["id"]
 
     if not is_family_member:
         # Get user from API
         start_time = time.monotonic()
-        user = await get_api_data(f"/users/{participant.identity}")
+        user = await get_api_data(f"/users/{user_id}")
         end_time = time.monotonic()
         print(f"Get user from API took: {end_time - start_time:.2f} seconds")
 
