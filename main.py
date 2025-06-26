@@ -116,9 +116,13 @@ class OnboardingAgent(Agent):
 
         messages = turn_ctx.items
         last_message = new_message
-        second_to_last_message = messages[-1]
+        second_to_last_message = messages[-1] if len(messages) >= 2 else None
 
-        if last_message.role == "user" and second_to_last_message.role == "assistant":
+        if (
+            last_message.role == "user"
+            and second_to_last_message
+            and second_to_last_message.role == "assistant"
+        ):
             # Convert messages to the format needed for ingestion
             messages_to_ingest = []
             for message in [last_message, second_to_last_message]:
@@ -195,15 +199,18 @@ class Companion(Agent):
     async def on_user_turn_completed(
         self, turn_ctx: ChatContext, new_message: ChatMessage
     ) -> None:
-        print("on_user_turn_completed")
         if not self.session_id:
             return new_message
 
         messages = turn_ctx.items
         last_message = new_message
-        second_to_last_message = messages[-1]
+        second_to_last_message = messages[-1] if len(messages) >= 2 else None
 
-        if last_message.role == "user" and second_to_last_message.role == "assistant":
+        if (
+            last_message.role == "user"
+            and second_to_last_message
+            and second_to_last_message.role == "assistant"
+        ):
             # Convert messages to the format needed for ingestion
             messages_to_ingest = []
             for message in [last_message, second_to_last_message]:
