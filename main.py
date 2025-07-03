@@ -76,8 +76,9 @@ zep = Zep(
 
 class OnboardingAgent(Agent):
     session_id: str
+    user: dict
 
-    def __init__(self, chat_ctx: ChatContext, session_id: str) -> None:
+    def __init__(self, chat_ctx: ChatContext, session_id: str, user: dict) -> None:
         super().__init__(
             chat_ctx=chat_ctx,
             instructions="""
@@ -104,10 +105,13 @@ class OnboardingAgent(Agent):
         )
 
         self.session_id = session_id
+        self.user = user
 
     # Ingest messages into memory when the user turns are completed
     async def on_user_turn_completed(
-        self, turn_ctx: ChatContext, new_message: ChatMessage
+        self,
+        turn_ctx: ChatContext,
+        new_message: ChatMessage,
     ) -> None:
         if not self.session_id:
             return new_message
@@ -125,10 +129,14 @@ class OnboardingAgent(Agent):
             for message in [last_message, second_to_last_message]:
                 # Determine role type based on message role
                 role_type = "user" if message.role == "user" else "assistant"
-
+                content = (
+                    f"{self.user['name'] if self.user['name'] else 'Unknown Caller'}: {message.text_content}"
+                    if role_type == "user"
+                    else message.text_content
+                )
                 messages_to_ingest.append(
                     {
-                        "content": message.text_content,
+                        "content": content,
                         "role": "family_member",
                         "role_type": role_type,
                     }
@@ -272,10 +280,14 @@ class Companion(Agent):
             for message in [last_message, second_to_last_message]:
                 # Determine role type based on message role
                 role_type = "user" if message.role == "user" else "assistant"
-
+                content = (
+                    f"{self.user['name'] if self.user['name'] else 'Unknown Caller'}: {message.text_content}"
+                    if role_type == "user"
+                    else message.text_content
+                )
                 messages_to_ingest.append(
                     {
-                        "content": message.text_content,
+                        "content": content,
                         "role_type": role_type,
                     }
                 )
@@ -479,7 +491,7 @@ class Companion(Agent):
             cron_expression: The cron expression specifying when to trigger the task.
                 message: The topic or message that the user wants to discuss.
             title: The title of the task.
-            message: The message to send to the user.
+            message: This should be the topic of the phone call that the user wants to discuss. For example, if the user says "I want to discuss my grandchildren", then the message should be "discuss grandchildren".
         Returns:
             A string indicating whether the task was successfully scheduled.
         """
@@ -621,30 +633,28 @@ async def entrypoint(ctx: JobContext):
 
     if participant.identity.startswith("sip_"):
         phone_number = participant.identity[4:]
-        user_or_family_member = await get_api_data(
-            f"/users/search?phoneNumber={phone_number}"
-        )
+        user = await get_api_data(f"/users/search?phoneNumber={phone_number}")
 
-        print(user_or_family_member)
-
-        if user_or_family_member["type"] == "family_member":
+        if user["type"] == "family_member":
             is_family_member = True
-            user_id = user_or_family_member["userId"]
+            user_id = user["userId"]
         else:
-            user_id = user_or_family_member["id"]
+            user_id = user["id"]
+    else:
+        user = await get_api_data(f"/users/{user_id}")
 
     if not is_family_member:
         # Get user from API
         start_time = time.monotonic()
-        user = await get_api_data(f"/users/{user_id}")
+        # user = await get_api_data(f"/users/{user_id}")
         end_time = time.monotonic()
         print(f"Get user from API took: {end_time - start_time:.2f} seconds")
 
         # Get user context
         start_time = time.monotonic()
         # get sessions for the family "owner" user ID
-        sessions = zep.user.get_sessions(user_id=user["id"])
-        user_id = user["id"]
+        sessions = zep.user.get_sessions(user_id)
+        # user_id = user["id"]
         end_time = time.monotonic()
         print(f"Zep get sessions took: {end_time - start_time:.2f} seconds")
 
@@ -677,7 +687,7 @@ async def entrypoint(ctx: JobContext):
         initial_context.add_message(
             role="user",
             content=f"""
-                Here's what you already know about me:
+                Here's what you already know about me. These are facts gathered throughout our conversations and also facts contributed by family members in other conversations.
 
                 <user_context>
                 {user_context}
@@ -689,7 +699,9 @@ async def entrypoint(ctx: JobContext):
         initial_context.add_message(
             role="user",
             content=f"""
-                Here's what I want to discuss with you:
+                You, the Companion, are currently in a phone call with me, the user. Some time ago, I asked you to discuss a topic with you. You have now been connected with  me via a phone call to discuss this topic. 
+                
+                Here's what the topic I want to discuss with you:
 
                 <user_request>
                 {attributes["initialRequest"]}
@@ -710,7 +722,9 @@ async def entrypoint(ctx: JobContext):
     agent = None
 
     if is_family_member:
-        agent = OnboardingAgent(chat_ctx=initial_context, session_id=session_id)
+        agent = OnboardingAgent(
+            chat_ctx=initial_context, session_id=session_id, user=user
+        )
     else:
         agent = Companion(chat_ctx=initial_context, session_id=session_id, user=user)
 
