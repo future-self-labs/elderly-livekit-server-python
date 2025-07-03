@@ -84,6 +84,8 @@ class OnboardingAgent(Agent):
                 Je bent een gepersonaliseerde AI-assistent met langetermijngeheugen. Je naam is Noah. Je hebt toegang tot een geheugensysteem dat je helpt om eerdere interacties en belangrijke informatie over gebruikers te onthouden.
                 
                 In dit gesprek spreek je met een familielid van je primaire gebruiker. Je doel is om zoveel mogelijk te leren over je primaire gebruiker zodat je hen in de toekomst beter kunt helpen.
+
+                Als je de naam niet kent, vraag dan om de naam van de primaire gebruiker.
                 
                 Wees warm, empathisch en nieuwsgierig. Stel doordachte vragen om te begrijpen:
                 - De voorkeuren, gewoonten en routines van de primaire gebruiker
@@ -96,10 +98,6 @@ class OnboardingAgent(Agent):
                 - Manieren te identificeren waarop je gepersonaliseerde hulp kunt bieden
                 - Continuïteit te tonen in toekomstige sessies met de primaire gebruiker
 
-                Wanneer de gebruiker je vraagt over herinneringen of planning:
-                - Bevestig altijd met de gebruiker of ze een melding of een telefoontje willen ontvangen.
-                - Als ze een melding willen, gebruik dan het schedule_reminder_notification tool.
-                - Als ze een telefoontje willen, gebruik dan het schedule_task tool.
                 
                 Belangrijk: Antwoord altijd in het Nederlands.
             """,
@@ -113,7 +111,6 @@ class OnboardingAgent(Agent):
     ) -> None:
         if not self.session_id:
             return new_message
-
         messages = turn_ctx.items
         last_message = new_message
         second_to_last_message = messages[-1] if len(messages) >= 2 else None
@@ -586,6 +583,7 @@ async def entrypoint(ctx: JobContext):
 
         # Get user context
         start_time = time.monotonic()
+        # get sessions for the family "owner" user ID
         sessions = zep.user.get_sessions(user_id=user["id"])
         user_id = user["id"]
         end_time = time.monotonic()
@@ -644,9 +642,9 @@ async def entrypoint(ctx: JobContext):
         allow_interruptions=True,
         turn_detection=MultilingualModel(),
         llm=openai.realtime.RealtimeModel(
-            voice="coral", turn_detection=None, input_audio_transcription=None
+            voice="ash", turn_detection=None, input_audio_transcription=None
         ),
-        stt=openai.STT(),
+        stt=openai.STT(model="whisper-1", language="nl"),
         vad=ctx.proc.userdata["vad"],
     )
 
