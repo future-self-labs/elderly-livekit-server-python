@@ -1,5 +1,13 @@
 # LiveKit Server
 
+This is the LiveKit server for the elderly companion app. It requires that the elderly-api is running.
+
+Livekit exposes two agents: a family onboarding agent and a companion agent.
+
+The family onboarding agent is responsible for handling the onboarding process for a new family member. It is responsible for gathering information about the family member and their relationship to the elderly user.
+
+The companion agent is responsible for handling the conversation with the elderly user. It is responsible for responding to the user's messages and is the main assistant.
+
 ## Setup
 
 ### uv
