@@ -14,9 +14,7 @@ from livekit.agents import (
 from livekit.plugins import (
     noise_cancellation,
     openai,
-    silero,
 )
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
 from zep_cloud.client import Zep
 
 from agents.companion_agent import CompanionAgent
@@ -146,15 +144,24 @@ async def entrypoint(ctx: JobContext):
             """,
         )
 
+    from livekit.plugins.openai.realtime.realtime_model import TurnDetection, InputAudioTranscription
+
     session = AgentSession(
         allow_interruptions=True,
-        turn_detection=MultilingualModel(),
-        # we disable realtime turn detection because we need the end_user_turn hook to be called in the Agent
+        # Use OpenAI's server-side turn detection for much lower latency
         llm=openai.realtime.RealtimeModel(
-            voice="ash", turn_detection=None, input_audio_transcription=None
+            voice="ash",
+            turn_detection=TurnDetection(
+                type="server_vad",
+                threshold=0.5,
+                prefix_padding_ms=300,
+                silence_duration_ms=500,
+            ),
+            input_audio_transcription=InputAudioTranscription(
+                model="whisper-1",
+                language="nl",
+            ),
         ),
-        stt=openai.STT(model="whisper-1", language="nl"),
-        vad=ctx.proc.userdata["vad"],
     )
 
     agent = None
@@ -184,15 +191,10 @@ async def entrypoint(ctx: JobContext):
     )
 
 
-def prewarm(proc: JobProcess):
-    proc.userdata["vad"] = silero.VAD.load()
-
-
 if __name__ == "__main__":
     agents.cli.run_app(
         agents.WorkerOptions(
             agent_name="noah",
             entrypoint_fnc=entrypoint,
-            prewarm_fnc=prewarm,
         )
     )
