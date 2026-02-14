@@ -109,9 +109,15 @@ class CompanionAgent(Agent):
                 
                 Be Noah: a cherished companion who brings warmth, purpose, safety, and connection to the user’s day, helping him/her thrive through care and engagement.
 
+                TV, Film & Entertainment Recommendations: When the user mentions wanting to watch something, asks what's on TV, or talks about movies/series they enjoyed, use the movie_recommendation tool to search for films and shows available on streaming services in the Netherlands. Combine their known preferences from memory with the search results to give warm, personalized suggestions. Mention which platform it's on (Netflix, Amazon Prime, etc.) so they know where to find it.
+                
+                Example: "You mentioned you loved that detective series last week. I found a new Dutch thriller on Netflix that you might enjoy—shall I tell you about it?"
+                Example: "Since you love nature documentaries, there's a beautiful one about the Wadden Sea on NPO Start. Want to hear more?"
+
                 Tools:
                 You have access to the following tools:
                 - web_search: Search the web for information.
+                - movie_recommendation: Search for movies and TV shows available on streaming services in the Netherlands. Use this when the user asks for something to watch, mentions films/series, or during evening conversations.
                 - schedule_reminder_notification: Schedule a reminder notification to be sent to the user as a push notification.
                 - schedule_task: Schedule a task to be discussed over a phone call.
                 - get_scheduled_tasks: Get the scheduled tasks for the user.
@@ -186,6 +192,157 @@ class CompanionAgent(Agent):
         except Exception as error:
             print(f"Error ingesting messages: {error}")
             print(messages_to_ingest)
+
+    @function_tool
+    async def movie_recommendation(
+        self,
+        context: RunContext,
+        query: str,
+        genre: str = "",
+        media_type: str = "both",
+    ):
+        """Search for movies and TV shows available on streaming platforms in the Netherlands.
+
+        Use this tool when the user asks for something to watch, mentions movies or series
+        they like, wants entertainment recommendations, or during calm evening conversations.
+        Combines TMDB data with streaming availability for Dutch users.
+
+        Args:
+            query: What to search for. Can be a title, topic, or description like "Dutch thriller" or "nature documentary".
+            genre: Optional genre filter like "drama", "comedy", "documentary", "thriller", "romance", "animation".
+            media_type: Type of content: "movie", "tv", or "both".
+
+        Returns:
+            A string with movie/show recommendations including streaming availability.
+        """
+        await context.session.generate_reply(
+            instructions=f"""
+            You are looking up entertainment recommendations for "{query}".
+            Tell the user briefly that you're checking what's available, in a warm way.
+        """
+        )
+
+        tmdb_api_key = os.getenv("TMDB_API_KEY")
+        if not tmdb_api_key:
+            # Fallback to web search if no TMDB key
+            print("[MovieRec] No TMDB_API_KEY, falling back to web search")
+            return await self._movie_search_fallback(query, genre)
+
+        try:
+            start_time = time.monotonic()
+            results = []
+
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                # Search TMDB
+                search_type = "multi" if media_type == "both" else media_type
+                search_url = f"https://api.themoviedb.org/3/search/{search_type}"
+                
+                search_response = await client.get(
+                    search_url,
+                    params={
+                        "api_key": tmdb_api_key,
+                        "query": query,
+                        "language": "nl-NL",
+                        "region": "NL",
+                        "include_adult": "false",
+                    },
+                )
+
+                if search_response.status_code != 200:
+                    print(f"[MovieRec] TMDB search failed: {search_response.status_code}")
+                    return await self._movie_search_fallback(query, genre)
+
+                search_data = search_response.json()
+                items = search_data.get("results", [])[:8]
+
+                # For each result, get streaming providers (NL)
+                for item in items:
+                    item_type = item.get("media_type", media_type if media_type != "both" else "movie")
+                    if item_type not in ("movie", "tv"):
+                        continue
+
+                    item_id = item["id"]
+                    title = item.get("title") or item.get("name", "Unknown")
+                    overview = item.get("overview", "")[:200]
+                    rating = item.get("vote_average", 0)
+                    year = (item.get("release_date") or item.get("first_air_date") or "")[:4]
+
+                    # Get Dutch streaming providers
+                    providers_url = f"https://api.themoviedb.org/3/{item_type}/{item_id}/watch/providers"
+                    prov_response = await client.get(
+                        providers_url,
+                        params={"api_key": tmdb_api_key},
+                    )
+
+                    streaming_platforms = []
+                    if prov_response.status_code == 200:
+                        prov_data = prov_response.json()
+                        nl_data = prov_data.get("results", {}).get("NL", {})
+                        
+                        # flatrate = subscription streaming
+                        for provider in nl_data.get("flatrate", []):
+                            streaming_platforms.append(provider["provider_name"])
+                        # Also check free
+                        for provider in nl_data.get("free", []):
+                            streaming_platforms.append(f"{provider['provider_name']} (gratis)")
+
+                    result = {
+                        "title": title,
+                        "year": year,
+                        "type": "Film" if item_type == "movie" else "Serie",
+                        "rating": f"{rating:.1f}/10" if rating > 0 else "Geen score",
+                        "description": overview,
+                        "streaming": streaming_platforms if streaming_platforms else ["Niet gevonden op streaming"],
+                    }
+                    results.append(result)
+
+            end_time = time.monotonic()
+            print(f"[MovieRec] TMDB search took: {end_time - start_time:.2f} seconds, found {len(results)} results")
+
+            if not results:
+                return f"No results found for '{query}'. Try a different search term."
+
+            # Format as readable text for the agent
+            output = f"Entertainment recommendations for '{query}' (Netherlands):\n\n"
+            for i, r in enumerate(results[:5], 1):
+                platforms = ", ".join(r["streaming"])
+                output += f"{i}. {r['title']} ({r['year']}) - {r['type']}\n"
+                output += f"   Score: {r['rating']}\n"
+                output += f"   Beschikbaar op: {platforms}\n"
+                if r["description"]:
+                    output += f"   {r['description']}\n"
+                output += "\n"
+
+            return output
+
+        except Exception as error:
+            print(f"[MovieRec] Error: {error}")
+            return await self._movie_search_fallback(query, genre)
+
+    async def _movie_search_fallback(self, query: str, genre: str = "") -> str:
+        """Fallback: use Perplexity web search for movie recommendations."""
+        search_query = f"beste {genre} films series op Netflix Amazon Prime NPO Nederland 2026: {query}"
+        try:
+            response = httpx.post(
+                "https://api.perplexity.ai/chat/completions",
+                json={
+                    "messages": [{"content": search_query, "role": "user"}],
+                    "model": "sonar",
+                },
+                headers={
+                    "Authorization": f"Bearer {os.getenv('PERPLEXITY_API_KEY')}",
+                    "Content-Type": "application/json",
+                },
+                timeout=20.0,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                return f"Entertainment search results (web):\n{content}"
+        except Exception as e:
+            print(f"[MovieRec] Fallback also failed: {e}")
+
+        return "I couldn't find entertainment recommendations right now. Try asking me later!"
 
     @function_tool
     async def web_search(
