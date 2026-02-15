@@ -1,4 +1,6 @@
+import asyncio
 import os
+from functools import partial
 from uuid import uuid4
 
 import httpx
@@ -19,43 +21,79 @@ from zep_cloud.client import Zep
 
 from agents.companion_agent import CompanionAgent
 from agents.onboarding_agent import OnboardingAgent
+from prompts import load_all_skills
 
 load_dotenv()
 
+# Load skills once at startup (not per-session)
+_SKILLS_CONTEXT = load_all_skills()
+
+# Shared HTTP client for connection pooling (reused across requests)
+_http_client: httpx.AsyncClient | None = None
+
+
+def get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=15.0,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+    return _http_client
+
 
 async def get_api_data(path: str, **kwargs) -> dict:
-    """
-    Fetch data from the API.
-
-    Args:
-        path: The API path to fetch from (should start with '/')
-        **kwargs: Additional arguments to pass to httpx.AsyncClient.request
-
-    Returns:
-        The JSON response as a dictionary
-    """
+    """Fetch data from the API using the shared HTTP client."""
     api_url = os.getenv("API_URL")
     if not api_url:
         raise ValueError("API_URL environment variable is not set")
-    else:
-        print(f"API_URL: {api_url}")
 
     url = f"{api_url}{path}"
-
     headers = kwargs.pop("headers", {})
     headers["Content-Type"] = "application/json"
 
-    async with httpx.AsyncClient() as client:
-        response = await client.request(
-            method=kwargs.pop("method", "GET"), url=url, headers=headers, **kwargs
-        )
-        response.raise_for_status()
-        return response.json()
+    client = get_http_client()
+    response = await client.request(
+        method=kwargs.pop("method", "GET"), url=url, headers=headers, **kwargs
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 zep = Zep(
     api_key=os.getenv("ZEP_API_KEY"),
 )
+
+
+async def _run_sync(func, *args, **kwargs):
+    """Run a blocking/sync function in a thread executor to avoid blocking the event loop."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, partial(func, *args, **kwargs))
+
+
+async def _get_zep_context(user_id: str) -> str | None:
+    """Fetch user context from Zep memory, running sync calls in thread executor."""
+    try:
+        sessions = await _run_sync(zep.user.get_sessions, user_id)
+
+        if len(sessions) > 0:
+            sorted_sessions = sorted(sessions, key=lambda x: x.created_at, reverse=True)
+            most_recent_session = sorted_sessions[0]
+            most_recent_memory = await _run_sync(zep.memory.get, most_recent_session.session_id)
+            return most_recent_memory.context
+    except Exception as e:
+        print(f"[Zep] Error fetching context: {e}")
+    return None
+
+
+async def _create_zep_session(user_id: str) -> str:
+    """Create a new Zep session, running sync call in thread executor."""
+    session = await _run_sync(
+        zep.memory.add_session,
+        session_id=uuid4(),
+        user_id=user_id,
+    )
+    return session.session_id
 
 
 async def entrypoint(ctx: JobContext):
@@ -67,15 +105,11 @@ async def entrypoint(ctx: JobContext):
     user_id = participant.identity
 
     is_family_member = False
-    # will hold the user context from the memory store (Zep), i.e the facts about the user that have been gathered throughout the conversations
     user_context = None
-    # the user that is connecting to the agent
     user = None
-    # if it's a family member, we also need to store the elderly user's name and id
     elderly_user = None
 
-    # fetch the user from the API
-    # if the user is calling from a phone number, lookup the user by phone number
+    # Fetch user from API
     if participant.identity.startswith("sip_"):
         phone_number = participant.identity[4:]
         user = await get_api_data(f"/users/search?phoneNumber={phone_number}")
@@ -86,76 +120,63 @@ async def entrypoint(ctx: JobContext):
             elderly_user = await get_api_data(f"/users/{user_id}")
         else:
             user_id = user["id"]
-
-    # if a user is not calling from a phone number, they are using the app, and so we know they are the elderly user
     else:
         user = await get_api_data(f"/users/{user_id}")
         elderly_user = user
 
-    # if it is the main user, retrieve all the facts from the memory store (Zep)
+    # Parallelize: fetch Zep context + create Zep session at the same time
     if not is_family_member:
-        # Get user context
-        # get sessions for the family "owner" user ID
-        sessions = zep.user.get_sessions(user_id)
+        zep_context_task = asyncio.create_task(_get_zep_context(user_id))
+        zep_session_task = asyncio.create_task(_create_zep_session(user_id))
 
-        if len(sessions) > 0:
-            sorted_sessions = sorted(sessions, key=lambda x: x.created_at, reverse=True)
-            most_recent_session = sorted_sessions[0]
+        user_context, session_id = await asyncio.gather(zep_context_task, zep_session_task)
 
-            most_recent_memory = zep.memory.get(most_recent_session.session_id)
+        if user_context:
+            print(f"[Zep] Loaded context ({len(user_context)} chars)")
+    else:
+        session_id = await _create_zep_session(user_id)
 
-            user_context = most_recent_memory.context
-            print(user_context)
+    # Build initial context
+    # Skills are loaded as conversation context (not system prompt) — processed once, not every turn
+    initial_context = ChatContext()
+    initial_context.add_message(
+        role="assistant",
+        content=f"""I have the following skills and capabilities that I can use during our conversation:
 
-    # Create a new session in the memory store (Zep)
-    session = zep.memory.add_session(
-        session_id=uuid4(),
-        user_id=user_id,
+{_SKILLS_CONTEXT}""",
     )
 
-    session_id = session.session_id
-
-    # Initialize the context with the facts from the memory store (Zep)
-    initial_context = ChatContext()
     if user_context:
         initial_context.add_message(
             role="user",
-            content=f"""
-                Here's what you already know about me. These are facts gathered throughout our conversations and also facts contributed by family members in other conversations.
+            content=f"""Here's what you already know about me from previous conversations and family input:
 
-                <user_context>
-                {user_context}
-                </user_context>
-            """,
+<user_context>
+{user_context}
+</user_context>""",
         )
 
-    # Add the initial request from the user if the Agent is calling the user (triggered through N8N as a result of the scheduled workflow - see tool call in the companion agent)
     if attributes.get("initialRequest"):
         initial_context.add_message(
             role="user",
-            content=f"""
-                You, the Companion, are currently in a phone call with me, the user. Some time ago, I asked you to discuss a topic with you. You have now been connected with  me via a phone call to discuss this topic. 
-                
-                Here's what the topic I want to discuss with you:
+            content=f"""You are calling me to discuss a topic I previously requested. Here's what I want to discuss:
 
-                <user_request>
-                {attributes["initialRequest"]}
-                </user_request>
-            """,
+<user_request>
+{attributes["initialRequest"]}
+</user_request>""",
         )
 
     from livekit.plugins.openai.realtime.realtime_model import TurnDetection, InputAudioTranscription
 
     session = AgentSession(
         allow_interruptions=True,
-        # Use OpenAI's server-side turn detection for much lower latency
         llm=openai.realtime.RealtimeModel(
             voice="ash",
             turn_detection=TurnDetection(
                 type="server_vad",
                 threshold=0.5,
-                prefix_padding_ms=300,
-                silence_duration_ms=500,
+                prefix_padding_ms=200,       # was 300 → 200: capture less pre-speech padding
+                silence_duration_ms=350,     # was 500 → 350: respond faster after user stops
             ),
             input_audio_transcription=InputAudioTranscription(
                 model="whisper-1",

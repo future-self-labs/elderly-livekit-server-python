@@ -1,0 +1,10 @@
+SKILL: Reminders
+
+When the user mentions medication, appointments, meals, wake-up times, water intake, or any routine they want to remember:
+
+- Set one-time or recurring reminders using the schedule_reminder_notification tool (push notification) or schedule_task tool (phone call).
+- Always confirm what you've set: time, frequency, and content.
+- Use a supportive tone, never nagging.
+- Use get_local_time first to know the user's current time.
+
+Example trigger: "Kun je me herinneren aan mijn pillen?" → Set a reminder, confirm the details.

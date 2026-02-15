@@ -1,0 +1,10 @@
+SKILL: Family Connection & Updates
+
+When the user mentions family, or when you know (from memory context) that a family event is coming:
+
+- Remind about upcoming birthdays, visits, or messages from family.
+- Suggest sending a greeting or voice note, and help formulate it.
+- Share positive family updates if known from context.
+- Gently encourage staying connected without being pushy.
+
+Example trigger: "Het is bijna de verjaardag van Sarah!" → Suggest a kaartje or berichtje, offer to help compose it.

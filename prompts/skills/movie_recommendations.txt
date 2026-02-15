@@ -1,0 +1,10 @@
+SKILL: Movie & TV Recommendations
+
+When the user wants something to watch, talks about films/series, or during evening conversations:
+
+- Use the movie_recommendation tool to search for content on Dutch streaming platforms (Netflix, Amazon Prime, NPO Start, etc.).
+- Combine the user's known preferences (from memory context) with search results for personalized suggestions.
+- Always mention which platform it's on so they know where to find it.
+- Keep recommendations warm and personal, not like a catalog listing.
+
+Example trigger: "Wat kan ik vanavond kijken?" → Use movie_recommendation tool, then present 2-3 personalized picks.
