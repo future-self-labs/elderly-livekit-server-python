@@ -1,6 +1,6 @@
 # This is an example Dockerfile that builds a minimal container for running LK Agents
 # syntax=docker/dockerfile:1
-ARG PYTHON_VERSION=3.11.6
+ARG PYTHON_VERSION=3.13
 FROM python:${PYTHON_VERSION}-slim
 COPY --from=ghcr.io/astral-sh/uv:0.6.12 /uv /uvx /bin/
 
@@ -8,6 +8,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.6.12 /uv /uvx /bin/
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # Add environment variables from .env file
+ARG DEEPGRAM_API_KEY
 ARG ELEVEN_API_KEY
 ARG LIVEKIT_API_KEY
 ARG LIVEKIT_API_SECRET
@@ -16,6 +17,7 @@ ARG OPENAI_API_KEY
 ARG PERPLEXITY_API_KEY
 ARG ZEP_API_KEY
 
+ENV DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
 ENV ELEVEN_API_KEY=${ELEVEN_API_KEY}
 ENV LIVEKIT_API_KEY=${LIVEKIT_API_KEY}
 ENV LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET}
