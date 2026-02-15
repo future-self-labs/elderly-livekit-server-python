@@ -14,6 +14,8 @@ from livekit.agents import (
     RoomInputOptions,
 )
 from livekit.plugins import (
+    deepgram,
+    elevenlabs,
     noise_cancellation,
     openai,
 )
@@ -96,8 +98,13 @@ async def _create_zep_session(user_id: str) -> str:
     return session.session_id
 
 
-async def entrypoint(ctx: JobContext):
-    # Connect to LiveKit
+async def _build_context_and_agent(ctx: JobContext):
+    """Shared setup for both Realtime and Pipeline entrypoints.
+
+    Connects to LiveKit, identifies the participant, loads Zep context,
+    builds ChatContext with skills, and returns the agent + context needed
+    to start a session.
+    """
     await ctx.connect()
 
     participant = await ctx.wait_for_participant()
@@ -136,8 +143,7 @@ async def entrypoint(ctx: JobContext):
     else:
         session_id = await _create_zep_session(user_id)
 
-    # Build initial context
-    # Skills are loaded as conversation context (not system prompt) — processed once, not every turn
+    # Build initial context with skills
     initial_context = ChatContext()
     initial_context.add_message(
         role="assistant",
@@ -166,27 +172,8 @@ async def entrypoint(ctx: JobContext):
 </user_request>""",
         )
 
-    from livekit.plugins.openai.realtime.realtime_model import TurnDetection, InputAudioTranscription
-
-    session = AgentSession(
-        allow_interruptions=True,
-        llm=openai.realtime.RealtimeModel(
-            voice="ash",
-            turn_detection=TurnDetection(
-                type="server_vad",
-                threshold=0.5,
-                prefix_padding_ms=200,       # was 300 → 200: capture less pre-speech padding
-                silence_duration_ms=350,     # was 500 → 350: respond faster after user stops
-            ),
-            input_audio_transcription=InputAudioTranscription(
-                model="whisper-1",
-                language="nl",
-            ),
-        ),
-    )
-
+    # Build the agent
     agent = None
-
     if is_family_member:
         agent = OnboardingAgent(
             chat_ctx=initial_context,
@@ -198,6 +185,71 @@ async def entrypoint(ctx: JobContext):
         agent = CompanionAgent(
             chat_ctx=initial_context, session_id=session_id, user=user
         )
+
+    return agent
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint 1: OpenAI Realtime API (existing — agent name "noah")
+# ---------------------------------------------------------------------------
+
+async def entrypoint(ctx: JobContext):
+    agent = await _build_context_and_agent(ctx)
+
+    from livekit.plugins.openai.realtime.realtime_model import TurnDetection, InputAudioTranscription
+
+    session = AgentSession(
+        allow_interruptions=True,
+        llm=openai.realtime.RealtimeModel(
+            voice="ash",
+            turn_detection=TurnDetection(
+                type="server_vad",
+                threshold=0.5,
+                prefix_padding_ms=200,
+                silence_duration_ms=350,
+            ),
+            input_audio_transcription=InputAudioTranscription(
+                model="whisper-1",
+                language="nl",
+            ),
+        ),
+    )
+
+    await session.start(
+        agent=agent,
+        room=ctx.room,
+        room_input_options=RoomInputOptions(
+            noise_cancellation=noise_cancellation.BVC(),
+        ),
+    )
+
+    await session.generate_reply(
+        instructions="Greet the user and offer your assistance."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Entrypoint 2: Pipeline STT→LLM→TTS (new — agent name "noah-pipeline")
+# Deepgram Nova-2 (streaming STT) + GPT-4o-mini + ElevenLabs multilingual v2
+# ---------------------------------------------------------------------------
+
+async def pipeline_entrypoint(ctx: JobContext):
+    agent = await _build_context_and_agent(ctx)
+
+    session = AgentSession(
+        stt=deepgram.STT(
+            model="nova-2",
+            language="nl",
+        ),
+        llm=openai.LLM(
+            model="gpt-4o-mini",
+        ),
+        tts=elevenlabs.TTS(
+            model="eleven_multilingual_v2",
+            # Default voice — change to a specific voice_id if desired
+        ),
+        allow_interruptions=True,
+    )
 
     await session.start(
         agent=agent,
@@ -217,5 +269,9 @@ if __name__ == "__main__":
         agents.WorkerOptions(
             agent_name="noah",
             entrypoint_fnc=entrypoint,
-        )
+        ),
+        agents.WorkerOptions(
+            agent_name="noah-pipeline",
+            entrypoint_fnc=pipeline_entrypoint,
+        ),
     )
