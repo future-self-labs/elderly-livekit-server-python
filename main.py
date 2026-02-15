@@ -211,6 +211,7 @@ async def entrypoint(ctx: JobContext):
             ),
             tts=elevenlabs.TTS(
                 model="eleven_multilingual_v2",
+                output_format="pcm_24000",
             ),
             allow_interruptions=True,
         )
