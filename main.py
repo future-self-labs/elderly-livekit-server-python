@@ -27,6 +27,14 @@ from prompts import load_all_skills
 
 load_dotenv()
 
+# Patch av 13 flag names to match what livekit-agents expects (av 14 API)
+# av 13 uses UPPERCASE (NOBUFFER, FLUSH_PACKETS), livekit-agents expects snake_case (no_buffer, flush_packets)
+import av.container
+_Flags = av.container.Flags
+if not hasattr(_Flags, "no_buffer") and hasattr(_Flags, "NOBUFFER"):
+    _Flags.no_buffer = _Flags.NOBUFFER
+    _Flags.flush_packets = _Flags.FLUSH_PACKETS
+
 # Load skills once at startup (not per-session)
 _SKILLS_CONTEXT = load_all_skills()
 
@@ -211,7 +219,6 @@ async def entrypoint(ctx: JobContext):
             ),
             tts=elevenlabs.TTS(
                 model="eleven_multilingual_v2",
-                output_format="pcm_24000",
             ),
             allow_interruptions=True,
         )
