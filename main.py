@@ -324,13 +324,13 @@ async def entrypoint(ctx: JobContext):
                 temperature=0.8,
             ),
             tts=elevenlabs.TTS(
-                model="eleven_multilingual_v2",
+                model="eleven_turbo_v2_5",
                 voice_id=voice_id,
                 language="nl",
                 voice_settings=elevenlabs.VoiceSettings(
-                    stability=0.4,
-                    similarity_boost=0.75,
-                    style=0.3,
+                    stability=0.35,
+                    similarity_boost=0.8,
+                    style=0.4,
                 ),
             ),
             allow_interruptions=True,
