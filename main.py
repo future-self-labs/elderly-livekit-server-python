@@ -182,20 +182,36 @@ async def _build_context_and_agent(ctx: JobContext):
     # Fetch user from API
     if participant.identity.startswith("sip_"):
         phone_number = participant.identity[4:]
-        try:
-            user = await get_api_data(f"/users/search?phoneNumber={quote(phone_number, safe='')}")
+        room_name = ctx.room.name or ""
 
-            if user.get("type") == "family_member":
-                is_family_member = True
-                user_id = user["userId"]
-                elderly_user = await get_api_data(f"/users/{user_id}")
-            else:
+        # Outbound calls have room name "call-{userId}" — extract userId directly
+        if room_name.startswith("call-"):
+            extracted_id = room_name[5:]
+            print(f"[Agent] Outbound call detected — userId from room: {extracted_id}")
+            try:
+                user = await get_api_data(f"/users/{extracted_id}")
                 user_id = user["id"]
                 elderly_user = user
-        except Exception as e:
-            print(f"[Agent] SIP caller lookup failed (proceeding as unknown): {e}")
-            user = {"name": "Caller", "id": user_id}
-            elderly_user = user
+            except Exception as e:
+                print(f"[Agent] User lookup by room ID failed: {e}")
+                user = {"name": "Caller", "id": extracted_id}
+                elderly_user = user
+        else:
+            # Inbound call — look up by phone number
+            try:
+                user = await get_api_data(f"/users/search?phoneNumber={quote(phone_number, safe='')}")
+
+                if user.get("type") == "family_member":
+                    is_family_member = True
+                    user_id = user["userId"]
+                    elderly_user = await get_api_data(f"/users/{user_id}")
+                else:
+                    user_id = user["id"]
+                    elderly_user = user
+            except Exception as e:
+                print(f"[Agent] SIP caller lookup failed (proceeding as unknown): {e}")
+                user = {"name": "Caller", "id": user_id}
+                elderly_user = user
     else:
         user = await get_api_data(f"/users/{user_id}")
         elderly_user = user
@@ -337,31 +353,42 @@ async def entrypoint(ctx: JobContext):
 
     if use_pipeline:
         print(f"[Agent] Using PIPELINE mode (Deepgram + GPT-4o-mini + ElevenLabs, voice={voice_id})")
-        session = AgentSession(
-            vad=silero.VAD.load(
-                min_speech_duration=0.1,
-                min_silence_duration=0.3,
-            ),
-            stt=deepgram.STT(
-                model="nova-2",
-                language=user_language,
-            ),
-            llm=openai.LLM(
-                model="gpt-4o-mini",
-                temperature=0.8,
-            ),
-            tts=elevenlabs.TTS(
-                model="eleven_turbo_v2_5",
-                voice_id=voice_id,
-                language=user_language,
-                voice_settings=elevenlabs.VoiceSettings(
-                    stability=0.35,
-                    similarity_boost=0.8,
-                    style=0.4,
+        # Verify required API keys are present
+        if not os.getenv("DEEPGRAM_API_KEY"):
+            print("[Agent] ERROR: DEEPGRAM_API_KEY is not set — Pipeline mode cannot work")
+        if not os.getenv("ELEVEN_API_KEY"):
+            print("[Agent] ERROR: ELEVEN_API_KEY is not set — Pipeline mode cannot work")
+        try:
+            session = AgentSession(
+                vad=silero.VAD.load(
+                    min_speech_duration=0.1,
+                    min_silence_duration=0.3,
                 ),
-            ),
-            allow_interruptions=True,
-        )
+                stt=deepgram.STT(
+                    model="nova-2",
+                    language=user_language,
+                ),
+                llm=openai.LLM(
+                    model="gpt-4o-mini",
+                    temperature=0.8,
+                ),
+                tts=elevenlabs.TTS(
+                    model="eleven_turbo_v2_5",
+                    voice_id=voice_id,
+                    language=user_language,
+                    voice_settings=elevenlabs.VoiceSettings(
+                        stability=0.35,
+                        similarity_boost=0.8,
+                        style=0.4,
+                    ),
+                ),
+                allow_interruptions=True,
+            )
+            print("[Agent] Pipeline AgentSession created successfully")
+        except Exception as e:
+            print(f"[Agent] ERROR creating Pipeline session: {e}")
+            traceback.print_exc()
+            return
     else:
         print("[Agent] Using REALTIME mode (OpenAI Realtime API)")
         try:
@@ -369,12 +396,12 @@ async def entrypoint(ctx: JobContext):
                 allow_interruptions=True,
                 llm=openai.realtime.RealtimeModel(
                     voice="ash",
-                    turn_detection=TurnDetection(
-                        type="server_vad",
-                        threshold=0.5,
-                        prefix_padding_ms=200,
-                        silence_duration_ms=350,
-                    ),
+                turn_detection=TurnDetection(
+                    type="server_vad",
+                    threshold=0.7,
+                    prefix_padding_ms=300,
+                    silence_duration_ms=400,
+                ),
                     input_audio_transcription=InputAudioTranscription(
                         model="whisper-1",
                         language=user_language,
