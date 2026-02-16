@@ -22,6 +22,7 @@ from livekit.plugins import (
     noise_cancellation,
     openai,
     silero,
+    turn_detector,
 )
 from openai.types.beta.realtime.session import (
     InputAudioTranscription,
@@ -356,10 +357,8 @@ async def entrypoint(ctx: JobContext):
             print("[Agent] ERROR: ELEVEN_API_KEY is not set — Pipeline mode cannot work")
         try:
             session = AgentSession(
-                vad=silero.VAD.load(
-                    min_speech_duration=0.1,
-                    min_silence_duration=0.3,
-                ),
+                turn_detection=turn_detector.MultilingualModel(),
+                vad=silero.VAD.load(),
                 stt=deepgram.STT(
                     model="nova-2",
                     language=user_language,
@@ -379,6 +378,8 @@ async def entrypoint(ctx: JobContext):
                     ),
                 ),
                 allow_interruptions=True,
+                min_interruption_duration=0.6,
+                min_interruption_words=1,
             )
             print("[Agent] Pipeline AgentSession created successfully")
         except Exception as e:
@@ -390,14 +391,15 @@ async def entrypoint(ctx: JobContext):
         try:
             session = AgentSession(
                 allow_interruptions=True,
+                min_interruption_duration=0.6,
                 llm=openai.realtime.RealtimeModel(
                     voice="ash",
-                turn_detection=TurnDetection(
-                    type="server_vad",
-                    threshold=0.7,
-                    prefix_padding_ms=300,
-                    silence_duration_ms=400,
-                ),
+                    turn_detection=TurnDetection(
+                        type="server_vad",
+                        threshold=0.6,
+                        prefix_padding_ms=300,
+                        silence_duration_ms=500,
+                    ),
                     input_audio_transcription=InputAudioTranscription(
                         model="whisper-1",
                         language=user_language,
