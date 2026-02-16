@@ -279,7 +279,7 @@ Events in the next 7 days — mention these naturally during conversation:
             chat_ctx=initial_context, session_id=session_id, user=user
         )
 
-    return agent
+    return agent, user
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +290,8 @@ Events in the next 7 days — mention these naturally during conversation:
 DEFAULT_VOICE_ID = "bIHbv24MWmeRgasZH58o"  # ElevenLabs default (Will)
 
 async def entrypoint(ctx: JobContext):
-    agent = await _build_context_and_agent(ctx)
+    agent, user_data = await _build_context_and_agent(ctx)
+    user_language = (user_data or {}).get("language", "nl")
 
     # Parse metadata — can be plain "pipeline" string or JSON {"mode":"pipeline","voiceId":"..."}
     raw_metadata = (ctx.job.metadata or "").strip()
@@ -317,7 +318,7 @@ async def entrypoint(ctx: JobContext):
             ),
             stt=deepgram.STT(
                 model="nova-2",
-                language="nl",
+                language=user_language,
             ),
             llm=openai.LLM(
                 model="gpt-4o-mini",
@@ -326,7 +327,7 @@ async def entrypoint(ctx: JobContext):
             tts=elevenlabs.TTS(
                 model="eleven_turbo_v2_5",
                 voice_id=voice_id,
-                language="nl",
+                language=user_language,
                 voice_settings=elevenlabs.VoiceSettings(
                     stability=0.35,
                     similarity_boost=0.8,
@@ -351,7 +352,7 @@ async def entrypoint(ctx: JobContext):
                 ),
                 input_audio_transcription=InputAudioTranscription(
                     model="whisper-1",
-                    language="nl",
+                    language=user_language,
                 ),
             ),
         )

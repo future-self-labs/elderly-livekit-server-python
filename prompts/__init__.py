@@ -16,14 +16,25 @@ _PROMPTS_DIR = Path(__file__).parent
 _SKILLS_DIR = _PROMPTS_DIR / "skills"
 
 
-def load_system_prompt(user_name: str) -> str:
+LANGUAGE_NAMES = {
+    "nl": "Dutch",
+    "en": "English",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+    "tr": "Turkish",
+}
+
+
+def load_system_prompt(user_name: str, language: str = "nl") -> str:
     """Load the system prompt with user-specific substitutions.
 
     This is used as the `instructions` parameter on the Agent.
     Keep it tiny — it's re-processed on every turn.
     """
+    lang_name = LANGUAGE_NAMES.get(language, "Dutch")
     text = (_PROMPTS_DIR / "system.txt").read_text(encoding="utf-8").strip()
-    return text.replace("{user_name}", user_name)
+    return text.replace("{user_name}", user_name).replace("{language}", lang_name)
 
 
 def load_all_skills() -> str:
