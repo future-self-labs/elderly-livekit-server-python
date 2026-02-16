@@ -18,6 +18,7 @@ from livekit.plugins import (
     elevenlabs,
     noise_cancellation,
     openai,
+    silero,
 )
 from zep_cloud.client import Zep
 
@@ -210,15 +211,21 @@ async def entrypoint(ctx: JobContext):
     if use_pipeline:
         print("[Agent] Using PIPELINE mode (Deepgram + GPT-4o-mini + ElevenLabs)")
         session = AgentSession(
+            vad=silero.VAD.load(
+                min_speech_duration=0.1,
+                min_silence_duration=0.3,
+            ),
             stt=deepgram.STT(
                 model="nova-2",
                 language="nl",
             ),
             llm=openai.LLM(
                 model="gpt-4o-mini",
+                temperature=0.8,
             ),
             tts=elevenlabs.TTS(
-                model="eleven_multilingual_v2",
+                model="eleven_turbo_v2_5",
+                language="nl",
             ),
             allow_interruptions=True,
         )
