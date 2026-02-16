@@ -107,6 +107,49 @@ async def _create_zep_session(user_id: str) -> str:
     return session.session_id
 
 
+async def _get_people(user_id: str) -> list:
+    """Fetch the elderly user's people network from the API."""
+    try:
+        data = await get_api_data(f"/people/{user_id}")
+        return data.get("people", [])
+    except Exception as e:
+        print(f"[Memory] Error fetching people: {e}")
+        return []
+
+
+async def _get_upcoming_events(user_id: str, days: int = 7) -> list:
+    """Fetch upcoming events for the elderly user."""
+    try:
+        data = await get_api_data(f"/events/{user_id}/upcoming?days={days}")
+        return data.get("events", [])
+    except Exception as e:
+        print(f"[Memory] Error fetching events: {e}")
+        return []
+
+
+async def _log_wellbeing(user_id: str, mood_score: int | None = None,
+                          conversation_minutes: int = 0, topics: list | None = None,
+                          concerns: list | None = None):
+    """Log a wellbeing entry after a conversation."""
+    from datetime import date
+    try:
+        await get_api_data(
+            "/wellbeing",
+            method="POST",
+            json={
+                "elderlyUserId": user_id,
+                "date": date.today().isoformat(),
+                "moodScore": mood_score,
+                "conversationMinutes": conversation_minutes,
+                "topics": topics or [],
+                "concerns": concerns or [],
+            },
+        )
+        print(f"[Wellbeing] Logged for {user_id}")
+    except Exception as e:
+        print(f"[Wellbeing] Error logging: {e}")
+
+
 async def _build_context_and_agent(ctx: JobContext):
     """Shared setup for both Realtime and Pipeline entrypoints.
 
@@ -140,17 +183,27 @@ async def _build_context_and_agent(ctx: JobContext):
         user = await get_api_data(f"/users/{user_id}")
         elderly_user = user
 
-    # Parallelize: fetch Zep context + create Zep session at the same time
+    # Parallelize: fetch Zep context, create Zep session, load people + events
     if not is_family_member:
         zep_context_task = asyncio.create_task(_get_zep_context(user_id))
         zep_session_task = asyncio.create_task(_create_zep_session(user_id))
+        people_task = asyncio.create_task(_get_people(user_id))
+        events_task = asyncio.create_task(_get_upcoming_events(user_id))
 
-        user_context, session_id = await asyncio.gather(zep_context_task, zep_session_task)
+        user_context, session_id, people_data, upcoming_events = await asyncio.gather(
+            zep_context_task, zep_session_task, people_task, events_task
+        )
 
         if user_context:
             print(f"[Zep] Loaded context ({len(user_context)} chars)")
+        if people_data:
+            print(f"[Memory] Loaded {len(people_data)} people")
+        if upcoming_events:
+            print(f"[Memory] Loaded {len(upcoming_events)} upcoming events")
     else:
         session_id = await _create_zep_session(user_id)
+        people_data = []
+        upcoming_events = []
 
     # Build initial context with skills
     initial_context = ChatContext()
@@ -169,6 +222,37 @@ async def _build_context_and_agent(ctx: JobContext):
 <user_context>
 {user_context}
 </user_context>""",
+        )
+
+    # Inject people from the memory vault
+    if people_data:
+        people_text = "\n".join(
+            f"- {p['name']} ({p['relationship']})"
+            + (f", nickname: {p['nickname']}" if p.get("nickname") else "")
+            + (f", birthday: {p['birthDate']}" if p.get("birthDate") else "")
+            + (f" — {p['notes']}" if p.get("notes") else "")
+            for p in people_data
+        )
+        initial_context.add_message(
+            role="assistant",
+            content=f"""<memory_vault_people>
+People in the user's life:
+{people_text}
+</memory_vault_people>""",
+        )
+
+    # Inject upcoming events
+    if upcoming_events:
+        events_text = "\n".join(
+            f"- {e['title']} ({e['type']}) in {e.get('daysUntil', '?')} days — {e['date']}"
+            for e in upcoming_events
+        )
+        initial_context.add_message(
+            role="assistant",
+            content=f"""<upcoming_events>
+Events in the next 7 days — mention these naturally during conversation:
+{events_text}
+</upcoming_events>""",
         )
 
     if attributes.get("initialRequest"):
