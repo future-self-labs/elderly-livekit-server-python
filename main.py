@@ -357,7 +357,7 @@ async def entrypoint(ctx: JobContext):
             print("[Agent] ERROR: ELEVEN_API_KEY is not set — Pipeline mode cannot work")
         try:
             session = AgentSession(
-                turn_detection=turn_detector.MultilingualModel(),
+                turn_detection=turn_detector.EOUPlugin(),
                 vad=silero.VAD.load(),
                 stt=deepgram.STT(
                     model="nova-2",
