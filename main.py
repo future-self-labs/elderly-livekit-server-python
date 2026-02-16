@@ -287,13 +287,29 @@ Events in the next 7 days — mention these naturally during conversation:
 # dispatch metadata. The server sets metadata="pipeline" for pipeline tokens.
 # ---------------------------------------------------------------------------
 
+DEFAULT_VOICE_ID = "bIHbv24MWmeRgasZH58o"  # ElevenLabs default (Will)
+
 async def entrypoint(ctx: JobContext):
     agent = await _build_context_and_agent(ctx)
 
-    use_pipeline = (ctx.job.metadata or "").strip() == "pipeline"
+    # Parse metadata — can be plain "pipeline" string or JSON {"mode":"pipeline","voiceId":"..."}
+    raw_metadata = (ctx.job.metadata or "").strip()
+    use_pipeline = False
+    voice_id = DEFAULT_VOICE_ID
+
+    if raw_metadata == "pipeline":
+        use_pipeline = True
+    elif raw_metadata.startswith("{"):
+        try:
+            import json
+            meta = json.loads(raw_metadata)
+            use_pipeline = meta.get("mode") == "pipeline"
+            voice_id = meta.get("voiceId") or DEFAULT_VOICE_ID
+        except Exception:
+            pass
 
     if use_pipeline:
-        print("[Agent] Using PIPELINE mode (Deepgram + GPT-4o-mini + ElevenLabs)")
+        print(f"[Agent] Using PIPELINE mode (Deepgram + GPT-4o-mini + ElevenLabs, voice={voice_id})")
         session = AgentSession(
             vad=silero.VAD.load(
                 min_speech_duration=0.1,
@@ -309,6 +325,7 @@ async def entrypoint(ctx: JobContext):
             ),
             tts=elevenlabs.TTS(
                 model="eleven_turbo_v2_5",
+                voice_id=voice_id,
                 language="nl",
             ),
             allow_interruptions=True,
