@@ -1,6 +1,9 @@
 import asyncio
+import json
 import os
+import traceback
 from functools import partial
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
@@ -19,6 +22,10 @@ from livekit.plugins import (
     noise_cancellation,
     openai,
     silero,
+)
+from openai.types.beta.realtime.session import (
+    InputAudioTranscription,
+    TurnDetection,
 )
 from zep_cloud.client import Zep
 
@@ -97,14 +104,18 @@ async def _get_zep_context(user_id: str) -> str | None:
     return None
 
 
-async def _create_zep_session(user_id: str) -> str:
+async def _create_zep_session(user_id: str) -> str | None:
     """Create a new Zep session, running sync call in thread executor."""
-    session = await _run_sync(
-        zep.memory.add_session,
-        session_id=uuid4(),
-        user_id=user_id,
-    )
-    return session.session_id
+    try:
+        session = await _run_sync(
+            zep.memory.add_session,
+            session_id=uuid4(),
+            user_id=user_id,
+        )
+        return session.session_id
+    except Exception as e:
+        print(f"[Zep] Error creating session (non-fatal): {e}")
+        return None
 
 
 async def _get_people(user_id: str) -> list:
@@ -171,14 +182,20 @@ async def _build_context_and_agent(ctx: JobContext):
     # Fetch user from API
     if participant.identity.startswith("sip_"):
         phone_number = participant.identity[4:]
-        user = await get_api_data(f"/users/search?phoneNumber={phone_number}")
+        try:
+            user = await get_api_data(f"/users/search?phoneNumber={quote(phone_number, safe='')}")
 
-        if user["type"] == "family_member":
-            is_family_member = True
-            user_id = user["userId"]
-            elderly_user = await get_api_data(f"/users/{user_id}")
-        else:
-            user_id = user["id"]
+            if user.get("type") == "family_member":
+                is_family_member = True
+                user_id = user["userId"]
+                elderly_user = await get_api_data(f"/users/{user_id}")
+            else:
+                user_id = user["id"]
+                elderly_user = user
+        except Exception as e:
+            print(f"[Agent] SIP caller lookup failed (proceeding as unknown): {e}")
+            user = {"name": "Caller", "id": user_id}
+            elderly_user = user
     else:
         user = await get_api_data(f"/users/{user_id}")
         elderly_user = user
@@ -290,8 +307,18 @@ Events in the next 7 days — mention these naturally during conversation:
 DEFAULT_VOICE_ID = "bIHbv24MWmeRgasZH58o"  # ElevenLabs default (Will)
 
 async def entrypoint(ctx: JobContext):
-    agent, user_data = await _build_context_and_agent(ctx)
+    print(f"[Agent] entrypoint called — metadata={ctx.job.metadata!r}")
+
+    try:
+        agent, user_data = await _build_context_and_agent(ctx)
+    except Exception as e:
+        print(f"[Agent] FATAL: _build_context_and_agent failed: {e}")
+        traceback.print_exc()
+        return
+
     user_language = (user_data or {}).get("language", "nl")
+    user_id_log = (user_data or {}).get("id", "unknown")
+    print(f"[Agent] user_language={user_language}, user_id={user_id_log}")
 
     # Parse metadata — can be plain "pipeline" string or JSON {"mode":"pipeline","voiceId":"..."}
     raw_metadata = (ctx.job.metadata or "").strip()
@@ -302,7 +329,6 @@ async def entrypoint(ctx: JobContext):
         use_pipeline = True
     elif raw_metadata.startswith("{"):
         try:
-            import json
             meta = json.loads(raw_metadata)
             use_pipeline = meta.get("mode") == "pipeline"
             voice_id = meta.get("voiceId") or DEFAULT_VOICE_ID
@@ -338,36 +364,51 @@ async def entrypoint(ctx: JobContext):
         )
     else:
         print("[Agent] Using REALTIME mode (OpenAI Realtime API)")
-        from livekit.plugins.openai.realtime.realtime_model import TurnDetection, InputAudioTranscription
+        try:
+            session = AgentSession(
+                allow_interruptions=True,
+                llm=openai.realtime.RealtimeModel(
+                    voice="ash",
+                    turn_detection=TurnDetection(
+                        type="server_vad",
+                        threshold=0.5,
+                        prefix_padding_ms=200,
+                        silence_duration_ms=350,
+                    ),
+                    input_audio_transcription=InputAudioTranscription(
+                        model="whisper-1",
+                        language=user_language,
+                    ),
+                ),
+            )
+            print("[Agent] Realtime AgentSession created successfully")
+        except Exception as e:
+            print(f"[Agent] ERROR creating Realtime session: {e}")
+            traceback.print_exc()
+            return
 
-        session = AgentSession(
-            allow_interruptions=True,
-            llm=openai.realtime.RealtimeModel(
-                voice="ash",
-                turn_detection=TurnDetection(
-                    type="server_vad",
-                    threshold=0.5,
-                    prefix_padding_ms=200,
-                    silence_duration_ms=350,
-                ),
-                input_audio_transcription=InputAudioTranscription(
-                    model="whisper-1",
-                    language=user_language,
-                ),
+    try:
+        await session.start(
+            agent=agent,
+            room=ctx.room,
+            room_input_options=RoomInputOptions(
+                noise_cancellation=noise_cancellation.BVC(),
             ),
         )
+        print("[Agent] session.start() completed")
+    except Exception as e:
+        print(f"[Agent] ERROR during session.start(): {e}")
+        traceback.print_exc()
+        return
 
-    await session.start(
-        agent=agent,
-        room=ctx.room,
-        room_input_options=RoomInputOptions(
-            noise_cancellation=noise_cancellation.BVC(),
-        ),
-    )
-
-    await session.generate_reply(
-        instructions="Greet the user and offer your assistance."
-    )
+    try:
+        await session.generate_reply(
+            instructions="Greet the user and offer your assistance."
+        )
+        print("[Agent] generate_reply() completed")
+    except Exception as e:
+        print(f"[Agent] ERROR during generate_reply(): {e}")
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
