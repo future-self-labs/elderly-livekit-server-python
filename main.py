@@ -239,20 +239,20 @@ async def _build_context_and_agent(ctx: JobContext):
         upcoming_events = []
 
     # Build initial context with skills
+    # NOTE: context messages use XML tags (language-neutral) with minimal English scaffolding
+    # to avoid biasing the model toward English. The system prompt enforces the user's language.
     initial_context = ChatContext()
     initial_context.add_message(
         role="assistant",
-        content=f"""I have the following skills and capabilities that I can use during our conversation:
-
-{_SKILLS_CONTEXT}""",
+        content=f"""<skills>
+{_SKILLS_CONTEXT}
+</skills>""",
     )
 
     if user_context:
         initial_context.add_message(
-            role="user",
-            content=f"""Here's what you already know about me from previous conversations and family input:
-
-<user_context>
+            role="assistant",
+            content=f"""<user_context>
 {user_context}
 </user_context>""",
         )
@@ -268,22 +268,20 @@ async def _build_context_and_agent(ctx: JobContext):
         )
         initial_context.add_message(
             role="assistant",
-            content=f"""<memory_vault_people>
-People in the user's life:
+            content=f"""<people>
 {people_text}
-</memory_vault_people>""",
+</people>""",
         )
 
-    # Inject upcoming events
+    # Inject upcoming events — only mention naturally, don't lead with them
     if upcoming_events:
         events_text = "\n".join(
-            f"- {e['title']} ({e['type']}) in {e.get('daysUntil', '?')} days — {e['date']}"
+            f"- {e['title']} ({e['type']}) — {e['date']}"
             for e in upcoming_events
         )
         initial_context.add_message(
             role="assistant",
             content=f"""<upcoming_events>
-Events in the next 7 days — mention these naturally during conversation:
 {events_text}
 </upcoming_events>""",
         )
@@ -291,9 +289,7 @@ Events in the next 7 days — mention these naturally during conversation:
     if attributes.get("initialRequest"):
         initial_context.add_message(
             role="user",
-            content=f"""You are calling me to discuss a topic I previously requested. Here's what I want to discuss:
-
-<user_request>
+            content=f"""<user_request>
 {attributes["initialRequest"]}
 </user_request>""",
         )
@@ -428,9 +424,13 @@ async def entrypoint(ctx: JobContext):
         traceback.print_exc()
         return
 
+    # Build greeting instruction in the user's language
+    lang_name = {"nl": "Dutch", "en": "English", "de": "German", "fr": "French", "es": "Spanish", "tr": "Turkish"}.get(user_language, "Dutch")
+    greeting_instruction = f"Greet the user warmly in {lang_name}. Keep it short and natural — like a friend saying hello."
+
     try:
         await session.generate_reply(
-            instructions="Greet the user and offer your assistance."
+            instructions=greeting_instruction,
         )
         print("[Agent] generate_reply() completed")
     except Exception as e:
