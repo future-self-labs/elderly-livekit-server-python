@@ -193,6 +193,7 @@ async def _build_context_and_agent(ctx: JobContext):
                 user = await get_api_data(f"/users/{extracted_id}")
                 user_id = user["id"]
                 elderly_user = user
+                print(f"[Agent] Outbound call user: name={user.get('name')}, language={user.get('language')}, id={user_id}")
             except Exception as e:
                 print(f"[Agent] User lookup by room ID failed: {e}")
                 user = {"name": "Caller", "id": extracted_id}
