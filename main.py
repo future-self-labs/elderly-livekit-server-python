@@ -379,7 +379,8 @@ async def entrypoint(ctx: JobContext):
                         style=0.4,
                     ),
                 ),
-                allow_interruptions=False,
+                allow_interruptions=True,
+                min_interruption_duration=0.8,
                 min_endpointing_delay=0.5,
             )
             print("[Agent] Pipeline AgentSession created successfully")
