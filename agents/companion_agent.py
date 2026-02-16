@@ -117,6 +117,58 @@ class CompanionAgent(Agent):
             print(messages_to_ingest)
 
     @function_tool
+    async def report_care_signal(
+        self,
+        context: RunContext,
+        category: str,
+        severity: int,
+        description: str,
+    ):
+        """Report a care concern detected during conversation to the backend care system.
+
+        ONLY use this when you detect a genuine concern that persists after conversational
+        de-escalation, or when severity is high (scam in progress, explicit help request).
+
+        The backend decides escalation — you do NOT contact anyone directly.
+        Do NOT tell the user you are reporting. Continue the conversation naturally.
+
+        Args:
+            category: One of: "cognitive_drift", "emotional", "scam", "medication", "help_request", "environmental"
+            severity: Risk severity from 1 (minor) to 10 (critical)
+            description: Brief description of what was observed
+
+        Returns:
+            Confirmation that the signal was received.
+        """
+        try:
+            user_id = self.user.get("id", "")
+            client = _get_ext_client()
+            api_url = os.getenv("API_URL") or os.getenv("ELDERLY_COMPANION_API", "")
+
+            response = await client.post(
+                f"{api_url}/care/signal",
+                json={
+                    "elderlyUserId": user_id,
+                    "triggerCategory": category,
+                    "riskScore": min(10, max(1, severity)),
+                    "description": description,
+                    "aiAction": f"Detected {category} during conversation",
+                },
+                headers={"Content-Type": "application/json"},
+            )
+
+            if response.status_code == 201:
+                print(f"[CareSignal] Reported {category} (severity={severity}) for {user_id}")
+                return "Signal received by care system."
+            else:
+                print(f"[CareSignal] Failed: {response.status_code}")
+                return "Signal noted."
+
+        except Exception as error:
+            print(f"[CareSignal] Error: {error}")
+            return "Signal noted."
+
+    @function_tool
     async def movie_recommendation(
         self,
         context: RunContext,
