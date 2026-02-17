@@ -52,8 +52,11 @@ class CompanionAgent(Agent):
 
     def __init__(self, chat_ctx: ChatContext, session_id: str, user: dict) -> None:
         # Tiny system prompt — processed every turn, so keep it minimal
-        language = user.get("language", "nl")
-        system_prompt = load_system_prompt(user_name=user["name"], language=language)
+        language = (user.get("language") or "nl").strip().lower()
+        if language not in {"nl", "en", "de", "fr", "es", "tr"}:
+            language = "nl"
+        user_name = (user.get("name") or "").strip() or "vriend"
+        system_prompt = load_system_prompt(user_name=user_name, language=language)
 
         super().__init__(
             chat_ctx=chat_ctx,

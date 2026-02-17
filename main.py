@@ -22,7 +22,6 @@ from livekit.plugins import (
     noise_cancellation,
     openai,
     silero,
-    turn_detector,
 )
 from openai.types.beta.realtime.session import (
     InputAudioTranscription,
@@ -49,6 +48,7 @@ _SKILLS_CONTEXT = load_all_skills()
 
 # Shared HTTP client for connection pooling (reused across requests)
 _http_client: httpx.AsyncClient | None = None
+ALLOWED_LANGUAGES = {"nl", "en", "de", "fr", "es", "tr"}
 
 
 def get_http_client() -> httpx.AsyncClient:
@@ -59,6 +59,11 @@ def get_http_client() -> httpx.AsyncClient:
             limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
         )
     return _http_client
+
+
+def normalize_language(value: str | None) -> str:
+    code = (value or "nl").strip().lower()
+    return code if code in ALLOWED_LANGUAGES else "nl"
 
 
 async def get_api_data(path: str, **kwargs) -> dict:
@@ -139,6 +144,69 @@ async def _get_upcoming_events(user_id: str, days: int = 7) -> list:
         return []
 
 
+async def _get_family_update_brief(user_id: str) -> str | None:
+    """Build a concise status brief for family-member phone calls."""
+    try:
+        wellbeing_task = asyncio.create_task(get_api_data(f"/wellbeing/{user_id}/summary"))
+        health_task = asyncio.create_task(get_api_data(f"/health-data/{user_id}"))
+        transcripts_task = asyncio.create_task(get_api_data(f"/transcripts/{user_id}"))
+
+        wellbeing_data, health_data, transcripts_data = await asyncio.gather(
+            wellbeing_task, health_task, transcripts_task, return_exceptions=True
+        )
+
+        lines: list[str] = []
+
+        if isinstance(wellbeing_data, dict):
+            summary = wellbeing_data.get("summary") or {}
+            if summary:
+                mood = summary.get("averageMoodScore")
+                total_convos = summary.get("totalConversations", 0)
+                total_minutes = summary.get("totalMinutes", 0)
+                top_topics = (summary.get("topTopics") or [])[:3]
+                concerns = (summary.get("concerns") or [])[:3]
+                lines.append("Wellbeing (last 7 days):")
+                lines.append(
+                    f"- Avg mood: {mood if mood is not None else 'unknown'} / 5, "
+                    f"conversations: {total_convos}, minutes: {total_minutes}"
+                )
+                if top_topics:
+                    lines.append(f"- Top topics: {', '.join(top_topics)}")
+                if concerns:
+                    lines.append(f"- Concerns: {', '.join(concerns)}")
+
+        if isinstance(health_data, dict):
+            health = health_data.get("healthData")
+            if health:
+                stats = []
+                if health.get("stepCount", 0):
+                    stats.append(f"{health['stepCount']} steps")
+                if health.get("heartRate", 0):
+                    stats.append(f"{health['heartRate']} bpm")
+                if health.get("bloodOxygen", 0):
+                    stats.append(f"{health['bloodOxygen']}% oxygen")
+                if health.get("sleepHours") and health["sleepHours"] != "0":
+                    stats.append(f"{health['sleepHours']}h sleep")
+                if stats:
+                    lines.append(f"Latest health snapshot: {', '.join(stats)}")
+
+        if isinstance(transcripts_data, dict):
+            transcripts = transcripts_data.get("transcripts") or []
+            if transcripts:
+                latest = transcripts[0]
+                latest_summary = latest.get("summary")
+                if latest_summary:
+                    lines.append(f"Latest conversation summary: {latest_summary}")
+
+        if not lines:
+            return None
+
+        return "\n".join(lines)
+    except Exception as e:
+        print(f"[FamilyBrief] Error building family update brief: {e}")
+        return None
+
+
 async def _log_wellbeing(user_id: str, mood_score: int | None = None,
                           conversation_minutes: int = 0, topics: list | None = None,
                           concerns: list | None = None):
@@ -179,6 +247,7 @@ async def _build_context_and_agent(ctx: JobContext):
     user_context = None
     user = None
     elderly_user = None
+    family_update_brief = None
 
     # Fetch user from API
     if participant.identity.startswith("sip_"):
@@ -191,6 +260,7 @@ async def _build_context_and_agent(ctx: JobContext):
             print(f"[Agent] Outbound call detected — userId from room: {extracted_id}")
             try:
                 user = await get_api_data(f"/users/{extracted_id}")
+                user["language"] = normalize_language(user.get("language"))
                 user_id = user["id"]
                 elderly_user = user
                 print(f"[Agent] Outbound call user: name={user.get('name')}, language={user.get('language')}, id={user_id}")
@@ -202,11 +272,13 @@ async def _build_context_and_agent(ctx: JobContext):
             # Inbound call — look up by phone number
             try:
                 user = await get_api_data(f"/users/search?phoneNumber={quote(phone_number, safe='')}")
+                user["language"] = normalize_language(user.get("language"))
 
                 if user.get("type") == "family_member":
                     is_family_member = True
                     user_id = user["userId"]
                     elderly_user = await get_api_data(f"/users/{user_id}")
+                    elderly_user["language"] = normalize_language(elderly_user.get("language"))
                 else:
                     user_id = user["id"]
                     elderly_user = user
@@ -216,6 +288,7 @@ async def _build_context_and_agent(ctx: JobContext):
                 elderly_user = user
     else:
         user = await get_api_data(f"/users/{user_id}")
+        user["language"] = normalize_language(user.get("language"))
         elderly_user = user
 
     # Parallelize: fetch Zep context, create Zep session, load people + events
@@ -239,6 +312,7 @@ async def _build_context_and_agent(ctx: JobContext):
         session_id = await _create_zep_session(user_id)
         people_data = []
         upcoming_events = []
+        family_update_brief = await _get_family_update_brief(user_id)
 
     # Build initial context with skills
     # NOTE: context messages use XML tags (language-neutral) with minimal English scaffolding
@@ -296,6 +370,14 @@ async def _build_context_and_agent(ctx: JobContext):
 </user_request>""",
         )
 
+    if is_family_member and family_update_brief:
+        initial_context.add_message(
+            role="assistant",
+            content=f"""<family_update_brief>
+{family_update_brief}
+</family_update_brief>""",
+        )
+
     # Build the agent
     agent = None
     if is_family_member:
@@ -330,7 +412,7 @@ async def entrypoint(ctx: JobContext):
         traceback.print_exc()
         return
 
-    user_language = (user_data or {}).get("language", "nl")
+    user_language = normalize_language((user_data or {}).get("language", "nl"))
     user_id_log = (user_data or {}).get("id", "unknown")
     print(f"[Agent] user_language={user_language}, user_id={user_id_log}")
 
