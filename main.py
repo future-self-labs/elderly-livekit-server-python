@@ -437,9 +437,9 @@ async def entrypoint(ctx: JobContext):
             print("[Agent] ERROR: ELEVEN_API_KEY is not set — Pipeline mode cannot work")
         try:
             session = AgentSession(
-                turn_detection="vad",
+                turn_detection="stt",
                 vad=silero.VAD.load(
-                    min_silence_duration=0.35,
+                    min_silence_duration=0.4,
                 ),
                 stt=deepgram.STT(
                     model="nova-2",
@@ -462,7 +462,7 @@ async def entrypoint(ctx: JobContext):
                 # Demo-stable mode for mobile speaker use:
                 # disable interruptions to avoid echo-triggered barge-ins.
                 allow_interruptions=False,
-                min_endpointing_delay=0.35,
+                min_endpointing_delay=0.4,
             )
             print("[Agent] Pipeline AgentSession created successfully")
         except Exception as e:
@@ -473,9 +473,7 @@ async def entrypoint(ctx: JobContext):
         print("[Agent] Using REALTIME mode (OpenAI Realtime API)")
         try:
             session = AgentSession(
-                # Demo-safe: disable interruptions in Realtime mode to prevent
-                # speaker-loop self-barge on mobile loudspeaker.
-                allow_interruptions=False,
+                allow_interruptions=True,
                 llm=openai.realtime.RealtimeModel(
                     voice="ash",
                     # Use provider defaults for turn detection; custom tuning has
