@@ -504,9 +504,19 @@ async def entrypoint(ctx: JobContext):
         traceback.print_exc()
         return
 
-    # Build greeting instruction in the user's language
-    lang_name = {"nl": "Dutch", "en": "English", "de": "German", "fr": "French", "es": "Spanish", "tr": "Turkish"}.get(user_language, "Dutch")
-    greeting_instruction = f"Greet the user warmly in {lang_name}. Keep it short and natural — like a friend saying hello."
+    # Build greeting instruction in the user's language (literal per language)
+    greeting_instruction_by_language = {
+        "nl": "Begroet de gebruiker kort en warm in het Nederlands, alsof je een vertrouwde metgezel bent.",
+        "en": "Greet the user briefly and warmly in English, like a trusted companion.",
+        "de": "Begruesse den Nutzer kurz und warm auf Deutsch, wie ein vertrauter Begleiter.",
+        "fr": "Salue l utilisateur brievement et chaleureusement en francais, comme un compagnon de confiance.",
+        "es": "Saluda al usuario de forma breve y calida en espanol, como un companero de confianza.",
+        "tr": "Kullaniciyi Turkce kisa ve sicak bir sekilde, guvenilir bir yoldas gibi selamla.",
+    }
+    greeting_instruction = greeting_instruction_by_language.get(
+        user_language,
+        greeting_instruction_by_language["nl"],
+    )
 
     try:
         await session.generate_reply(
