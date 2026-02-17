@@ -247,7 +247,9 @@ async def _build_context_and_agent(ctx: JobContext):
     family_update_brief = None
 
     # Fetch user from API
-    if participant.identity.startswith("sip_"):
+    is_phone_call = participant.identity.startswith("sip_")
+
+    if is_phone_call:
         phone_number = participant.identity[4:]
         room_name = ctx.room.name or ""
 
@@ -389,7 +391,7 @@ async def _build_context_and_agent(ctx: JobContext):
             chat_ctx=initial_context, session_id=session_id, user=user
         )
 
-    return agent, user
+    return agent, user, is_phone_call
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +405,7 @@ async def entrypoint(ctx: JobContext):
     print(f"[Agent] entrypoint called — metadata={ctx.job.metadata!r}")
 
     try:
-        agent, user_data = await _build_context_and_agent(ctx)
+        agent, user_data, is_phone_call = await _build_context_and_agent(ctx)
     except Exception as e:
         print(f"[Agent] FATAL: _build_context_and_agent failed: {e}")
         traceback.print_exc()
@@ -428,6 +430,12 @@ async def entrypoint(ctx: JobContext):
         except Exception:
             pass
 
+    # Phone/SIP audio is narrowband and benefits from the pipeline STT path.
+    # Keep app modes unchanged; only force pipeline for phone calls.
+    if is_phone_call and not use_pipeline:
+        use_pipeline = True
+        print("[Agent] SIP call detected — forcing PIPELINE mode for better STT accuracy")
+
     if use_pipeline:
         print(f"[Agent] Using PIPELINE mode (Deepgram + GPT-4o-mini + ElevenLabs, voice={voice_id})")
         # Verify required API keys are present
@@ -436,13 +444,14 @@ async def entrypoint(ctx: JobContext):
         if not os.getenv("ELEVEN_API_KEY"):
             print("[Agent] ERROR: ELEVEN_API_KEY is not set — Pipeline mode cannot work")
         try:
+            stt_model = "nova-2-phonecall" if is_phone_call else "nova-2"
             session = AgentSession(
                 turn_detection="stt",
                 vad=silero.VAD.load(
                     min_silence_duration=0.4,
                 ),
                 stt=deepgram.STT(
-                    model="nova-2",
+                    model=stt_model,
                     language=user_language,
                 ),
                 llm=openai.LLM(
