@@ -23,10 +23,7 @@ from livekit.plugins import (
     openai,
     silero,
 )
-from openai.types.beta.realtime.session import (
-    InputAudioTranscription,
-    TurnDetection,
-)
+from openai.types.beta.realtime.session import InputAudioTranscription
 from zep_cloud.client import Zep
 
 from agents.companion_agent import CompanionAgent
@@ -440,9 +437,9 @@ async def entrypoint(ctx: JobContext):
             print("[Agent] ERROR: ELEVEN_API_KEY is not set — Pipeline mode cannot work")
         try:
             session = AgentSession(
-                turn_detection="vad",
+                turn_detection="stt",
                 vad=silero.VAD.load(
-                    min_silence_duration=0.5,
+                    min_silence_duration=0.4,
                 ),
                 stt=deepgram.STT(
                     model="nova-2",
@@ -462,9 +459,10 @@ async def entrypoint(ctx: JobContext):
                         style=0.4,
                     ),
                 ),
-                allow_interruptions=True,
-                min_interruption_duration=0.8,
-                min_endpointing_delay=0.5,
+                # Demo-stable mode for mobile speaker use:
+                # disable interruptions to avoid echo-triggered barge-ins.
+                allow_interruptions=False,
+                min_endpointing_delay=0.4,
             )
             print("[Agent] Pipeline AgentSession created successfully")
         except Exception as e:
@@ -476,15 +474,10 @@ async def entrypoint(ctx: JobContext):
         try:
             session = AgentSession(
                 allow_interruptions=True,
-                min_interruption_duration=0.6,
                 llm=openai.realtime.RealtimeModel(
                     voice="ash",
-                    turn_detection=TurnDetection(
-                        type="server_vad",
-                        threshold=0.6,
-                        prefix_padding_ms=300,
-                        silence_duration_ms=500,
-                    ),
+                    # Use provider defaults for turn detection; custom tuning has
+                    # caused unstable self-interruption behavior on device speakers.
                     input_audio_transcription=InputAudioTranscription(
                         model="whisper-1",
                         language=user_language,
