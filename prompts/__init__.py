@@ -9,7 +9,6 @@ The system prompt stays small for latency. Skills are injected as conversation c
 so the LLM knows its capabilities without bloating the system prompt.
 """
 
-import os
 from pathlib import Path
 
 _PROMPTS_DIR = Path(__file__).parent

@@ -13,7 +13,6 @@ from livekit.agents import (
     AgentSession,
     ChatContext,
     JobContext,
-    JobProcess,
     RoomInputOptions,
 )
 from livekit.plugins import (
@@ -28,13 +27,21 @@ from zep_cloud.client import Zep
 
 from agents.companion_agent import CompanionAgent
 from agents.onboarding_agent import OnboardingAgent
+from lib.api_client import (
+    api_headers,
+    family_member_elderly_id,
+    get_api_url,
+    normalize_language,
+    warn_if_service_token_missing,
+)
 from prompts import load_all_skills
 
 load_dotenv()
+warn_if_service_token_missing()
 
 # Patch av 13 flag names to match what livekit-agents expects (av 14 API)
 # av 13 uses UPPERCASE (NOBUFFER, FLUSH_PACKETS), livekit-agents expects snake_case (no_buffer, flush_packets)
-import av.container
+import av.container  # noqa: E402
 _Flags = av.container.Flags
 if not hasattr(_Flags, "no_buffer") and hasattr(_Flags, "NOBUFFER"):
     _Flags.no_buffer = _Flags.NOBUFFER
@@ -45,7 +52,6 @@ _SKILLS_CONTEXT = load_all_skills()
 
 # Shared HTTP client for connection pooling (reused across requests)
 _http_client: httpx.AsyncClient | None = None
-ALLOWED_LANGUAGES = {"nl", "en", "de", "fr", "es", "tr"}
 
 
 def get_http_client() -> httpx.AsyncClient:
@@ -58,20 +64,13 @@ def get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
-def normalize_language(value: str | None) -> str:
-    code = (value or "nl").strip().lower()
-    return code if code in ALLOWED_LANGUAGES else "nl"
-
-
 async def get_api_data(path: str, **kwargs) -> dict:
-    """Fetch data from the API using the shared HTTP client."""
-    api_url = os.getenv("API_URL")
-    if not api_url:
-        raise ValueError("API_URL environment variable is not set")
+    """Fetch data from the API using the shared HTTP client.
 
-    url = f"{api_url}{path}"
-    headers = kwargs.pop("headers", {})
-    headers["Content-Type"] = "application/json"
+    Authenticates as the internal service via the X-Service-Token header.
+    """
+    url = f"{get_api_url()}{path}"
+    headers = api_headers(kwargs.pop("headers", None))
 
     client = get_http_client()
     response = await client.request(
@@ -275,7 +274,10 @@ async def _build_context_and_agent(ctx: JobContext):
 
                 if user.get("type") == "family_member":
                     is_family_member = True
-                    user_id = user["userId"]
+                    # API field is linkedElderlyId (was read as "userId", which never existed)
+                    user_id = family_member_elderly_id(user)
+                    if not user_id:
+                        raise ValueError("family member has no linked elderly user")
                     elderly_user = await get_api_data(f"/users/{user_id}")
                     elderly_user["language"] = normalize_language(elderly_user.get("language"))
                 else:

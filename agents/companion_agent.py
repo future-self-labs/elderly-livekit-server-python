@@ -15,6 +15,7 @@ from livekit.agents import (
 )
 from zep_cloud.client import Zep
 
+from lib.api_client import api_headers, get_api_url, normalize_language
 from lib.n8n import (
     create_scheduled_workflow,
     delete_scheduled_workflow,
@@ -52,9 +53,7 @@ class CompanionAgent(Agent):
 
     def __init__(self, chat_ctx: ChatContext, session_id: str, user: dict) -> None:
         # Tiny system prompt — processed every turn, so keep it minimal
-        language = (user.get("language") or "nl").strip().lower()
-        if language not in {"nl", "en", "de", "fr", "es", "tr"}:
-            language = "nl"
+        language = normalize_language(user.get("language"))
         user_name = (user.get("name") or "").strip() or "vriend"
         system_prompt = load_system_prompt(user_name=user_name, language=language)
 
@@ -147,10 +146,8 @@ class CompanionAgent(Agent):
         try:
             user_id = self.user.get("id", "")
             client = _get_ext_client()
-            api_url = os.getenv("API_URL") or os.getenv("ELDERLY_COMPANION_API", "")
-
             response = await client.post(
-                f"{api_url}/care/signal",
+                f"{get_api_url()}/care/signal",
                 json={
                     "elderlyUserId": user_id,
                     "triggerCategory": category,
@@ -158,7 +155,7 @@ class CompanionAgent(Agent):
                     "description": description,
                     "aiAction": f"Detected {category} during conversation",
                 },
-                headers={"Content-Type": "application/json"},
+                headers=api_headers(),
             )
 
             if response.status_code == 201:

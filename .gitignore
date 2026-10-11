@@ -6,6 +6,9 @@ dist/
 wheels/
 *.egg-info
 
+.pytest_cache/
+.ruff_cache/
+
 # Virtual environments
 .venv
 
@@ -19,3 +22,4 @@ wheels/
 
 # Livekit
 KMS/
+.DS_Store
